@@ -128,6 +128,13 @@ the model):
 - `run.json`: the same, for programs;
 - `rerun.sh`: the commands that worked, as a script you can read and run again without any AI.
 
+**Workflows.** If Snakemake is installed, the agent can write a workflow (a `Snakefile` in its run
+folder) and run it with `snakemake`, after a dry run. Before each run, AskTim! reads the Snakefile
+and checks every rule as it checks the agent's own commands: its shell command (with `{input}` and
+`{output}` filled in), the files it writes, and its Python code and scripts. Options and rules
+that would install software (`--use-conda`, containers, wrappers) are refused, and sending the
+jobs to a cluster (`--executor slurm`) needs your yes.
+
 The agent can also open a file for you. An HTML report (FastQC, MultiQC), an image or a PDF opens
 in its usual program. A BAM or VCF file can open in IGV, an alignment in Jalview or AliView, and a
 tree in FigTree, if those programs are installed. You are asked every time.
@@ -259,6 +266,9 @@ change, so check them before recommending one to a class. When this was written 
   programs (the agent opens files for you with `open_file` instead).
 - **Limits:** by default 25 steps and 600 seconds per command (a command is stopped together with
   everything it started), and output is trimmed before it is filtered.
+- **Snakemake workflows are read before they run.** Each rule's command, output files, Python code
+  and scripts get the same checks as the agent's commands, and so do Snakemake's options and
+  profiles. In the sandbox, programs keep their caches in the private temporary folder.
 - **Code is checked too.** Python and R the agent writes or runs is checked for installs, network
   use, deletions and writes outside its folder. Risky code still needs your yes in `--auto`.
 - **A record of every run** (`RUN.md`, `run.json`, `rerun.sh`), and a draft statement on your use of

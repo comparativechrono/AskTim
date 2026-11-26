@@ -68,6 +68,10 @@ AGENT_RULES = [
     "Use only programs and packages that are installed (listed below). Nothing can be installed: package managers (pip, conda, apt, "
     "brew, install.packages, BiocManager ...) and sudo are blocked. If the task needs something that is not installed, use an "
     "installed alternative if there is one, or stop and say what the student would need.",
+    "Workflows: if the student asks for a pipeline or workflow and Snakemake is installed, you may write a Snakefile in your folder "
+    "and run it with `snakemake --cores N`, after a dry run (`snakemake -n --cores N`). Its rules must use the installed programs: "
+    "no --use-conda, containers, wrappers or cluster executors (they install or download software, or run jobs out of AskTim!'s "
+    "reach). AskTim! checks every rule's command and output files just as it checks your own commands.",
     "{network}",
     "{folder}",
     "You cannot see data. AskTim! withholds it: in the output you receive, lines that look like data (sequences, reads, alignments, "
