@@ -17,7 +17,7 @@ that are installed, your recent commands (with secrets removed) and descriptions
 (format, size, columns) - not the data in them. `AskTim! privacy` says exactly what is sent.
 """
 
-__version__ = "0.1.1"
+from ._version import __version__
 
 __all__ = ["ask", "agent", "load_ipython_extension", "unload_ipython_extension", "__version__"]
 

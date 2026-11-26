@@ -26,9 +26,9 @@ jobs:
           python-version: "3.13"
       - name: Check that the release's tag matches the version in the code
         run: |
-          version=$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('src/asktim/__init__.py').read()).group(1))")
+          version=$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('src/asktim/_version.py').read()).group(1))")
           if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
-            echo "::error::The release's tag is $GITHUB_REF_NAME, but src/asktim/__init__.py says $version. Make them the same (tag v$version)."
+            echo "::error::The release's tag is $GITHUB_REF_NAME, but src/asktim/_version.py says $version. Make them the same (tag v$version)."
             exit 1
           fi
       - name: Build the wheel and the source archive, and check them

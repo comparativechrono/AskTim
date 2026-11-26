@@ -404,7 +404,7 @@ include it.
 
 ### Making a release
 
-1. Put the new version in `src/asktim/__init__.py` (`__version__ = "0.2.0"`) and push it.
+1. Put the new version in `src/asktim/_version.py` (`__version__ = "0.2.0"`) and push it.
 2. On GitHub, draft a new release with the tag `v0.2.0` (the same version, with a `v`) and publish it.
 
 The release workflow then runs the tests, builds the package, checks that the tag matches the
