@@ -7,8 +7,8 @@
 <p align="center"><strong>An AI helper for learning bioinformatics that keeps your data out of the AI.</strong></p>
 
 <p align="center">
-  <a href="https://pypi.org/project/AskTim/"><img src="https://img.shields.io/pypi/v/AskTim" alt="PyPI"></a>
-  <a href="https://pypi.org/project/AskTim/"><img src="https://img.shields.io/pypi/pyversions/AskTim" alt="Python versions"></a>
+  <a href="https://pypi.org/project/AskTim/"><img src="https://img.shields.io/pypi/v/AskTim?label=PyPI" alt="PyPI"></a>
+  <a href="https://pypi.org/project/AskTim/"><img src="https://img.shields.io/pypi/pyversions/AskTim?label=Python" alt="Python versions"></a>
   <a href="https://github.com/comparativechrono/AskTim/actions/workflows/tests.yml"><img src="https://github.com/comparativechrono/AskTim/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
 </p>
 
