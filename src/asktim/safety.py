@@ -885,6 +885,8 @@ def _check_simple(c, v, ctx, depth):
                     _check_write(tw, ctx, v, "dd's output")
     if base in JOBS:
         v.confirm("%s submits a job to the cluster's scheduler, which then runs outside AskTim!'s control" % base)
+    if base == "snakemake":
+        _check_snakemake(args, v, ctx, depth)
     if base == "git":
         _check_git(args, v, ctx)
     if base in NETWORK:
@@ -1087,6 +1089,275 @@ def _check_script(word, v, ctx, depth, how="run", lang=None):
         else:
             v.confirm("the script %s: %s" % (os.path.basename(p), r))
     v.writes.extend(sub.writes)
+
+
+# ------------------------------------------------------------------------------------------------
+# Snakemake: the command line, its profiles, and what the workflow's rules would do
+# ------------------------------------------------------------------------------------------------
+
+# options that take a value (so that the value is not read as a target)
+_SMK_VALUE = {
+    "-s", "--snakefile", "-d", "--directory", "--profile", "--workflow-profile", "-e", "--executor", "-c", "--cores",
+    "-j", "--jobs", "--configfile", "--configfiles", "--report", "--default-storage-provider", "--default-storage-prefix",
+    "--local-storage-prefix", "--conda-prefix", "--apptainer-prefix", "--singularity-prefix", "--shadow-prefix",
+    "--wrapper-prefix", "--jobscript", "--js", "--archive", "--cluster", "--cluster-sync", "--max-threads",
+    "--runtime-source-cache-path", "--set-threads", "--set-resources", "--default-resources", "--default-res",
+    "--resources", "--res", "--latency-wait", "--output-wait", "-w", "--rerun-triggers", "--keep-storage-local-copies",
+}
+_SMK_INSTALL = {"--use-conda", "--use-singularity", "--use-apptainer", "--conda-create-envs-only"}
+_SMK_DEPLOY = {"--software-deployment-method", "--deployment-method", "--deployment", "--sdm"}
+_SMK_CLUSTER = {"--cluster", "--cluster-sync", "--slurm", "--kubernetes", "--drmaa", "--tibanna", "--google-lifesciences",
+                "--flux", "--az-batch", "--tes", "--jobscript", "--js"}
+_SMK_NO_JOBS = {"-n", "--dry-run", "--dryrun", "--version", "-v", "-h", "--help", "--list", "-l", "--list-rules",
+                "--list-target-rules", "--lt", "--dag", "--rulegraph", "--filegraph", "--d3dag", "--summary", "-S",
+                "--detailed-summary", "-D", "--lint", "--unlock", "--cleanup-metadata", "--cm", "--containerize",
+                "--print-compilation", "--list-changes", "--lc", "--list-input-changes", "--li", "--list-code-changes",
+                "--list-params-changes", "--list-untracked", "--lu", "--compile"}
+
+
+def _smk_values(args, names):
+    """The values given to any of these options (--opt VALUE, --opt=VALUE; several for --sdm)."""
+    out = []
+    for i, a in enumerate(args):
+        t = a.text
+        for n in names:
+            if t == n:
+                j = i + 1
+                while j < len(args) and not args[j].text.startswith("-"):
+                    out.append(args[j].text)
+                    j += 1
+                    if n not in _SMK_DEPLOY:
+                        break
+            elif t.startswith(n + "=") and n.startswith("--"):
+                out.append(t.split("=", 1)[1])
+            elif not n.startswith("--") and t.startswith(n) and len(t) > len(n) and t[1] == n[1] and len(n) == 2:
+                out.append(t[2:])  # -dDIR
+    return out
+
+
+def _smk_profile_text(name, workdir):
+    """The text of a Snakemake profile's settings (config.yaml / profile.yaml), or None if not found."""
+    cands = []
+    if os.path.isabs(name) or os.sep in name or name.startswith("."):
+        cands.append(name if os.path.isabs(name) else os.path.join(workdir, name))
+    else:
+        home = os.path.expanduser("~")
+        cands += [os.path.join(workdir, name), os.path.join(workdir, "profiles", name),
+                  os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "snakemake", name),
+                  os.path.join("/etc/xdg/snakemake", name)]
+    for c in cands:
+        if os.path.isfile(c):
+            files = [c]
+        elif os.path.isdir(c):
+            files = sorted(os.path.join(c, f) for f in os.listdir(c) if re.match(r"^(config|profile)(\.v[\d.+]+)?\.ya?ml$", f))
+        else:
+            continue
+        text = ""
+        for f in files:
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    text += fh.read(200000) + "\n"
+            except OSError:
+                pass
+        return text
+    return None
+
+
+def _smk_check_settings(keys_values, v, ctx, where):
+    """The same rules for options given on the command line and in a profile ({option: [values]})."""
+    for k, vals in keys_values.items():
+        if k in _SMK_INSTALL or (k in _SMK_DEPLOY and any(x in ("conda", "apptainer", "singularity") for x in vals)):
+            v.block("%s: Snakemake would install software (%s creates conda environments or fetches containers); "
+                    "nothing may be installed: write the rules with the tools that are installed" % (where, k))
+        elif k in ("-e", "--executor") and any(x not in ("local", "dryrun", "touch") for x in vals):
+            v.confirm("%s: the jobs would be sent to %s, where they run outside AskTim!'s sandbox and checks" % (where, ", ".join(vals)))
+        elif k in _SMK_CLUSTER:
+            v.confirm("%s: %s sends the jobs to the cluster, where they run outside AskTim!'s sandbox and checks" % (where, k))
+        elif k in ("--default-storage-provider", "--default-storage-prefix"):
+            if not ctx.allow_network:
+                v.block("%s: Snakemake would keep the workflow's files on remote storage, over the internet, which is off for the agent" % where)
+            else:
+                v.confirm("%s: the workflow's files would be kept on remote storage (%s)" % (where, ", ".join(vals)))
+        elif k in ("--delete-all-output", "--delete-temp-output"):
+            v.confirm("%s: %s deletes the files that the workflow made" % (where, k))
+
+
+def _check_snakemake(args, v, ctx, depth):
+    from . import snakefile as smk
+
+    flags = _flag_set(args)
+    given = {}
+    for a in args:
+        t = a.text
+        if t.startswith("-") and not re.match(r"^-\d", t):
+            key = t.split("=", 1)[0]
+            if not key.startswith("--") and len(key) > 2:
+                key = key[:2]  # -dDIR, -np ...
+            given.setdefault(key, [])
+    for key in list(given):
+        given[key] = _smk_values(args, [key])
+    for f in flags:  # short options given together (-np)
+        given.setdefault(f, [])
+    _smk_check_settings(given, v, ctx, "snakemake's options")
+    # where it works and which Snakefile it reads
+    workdir = ctx.cwd
+    dirs = _smk_values(args, ["-d", "--directory"])
+    if dirs:
+        w = Word()
+        w.text = w.raw = dirs[-1]
+        p = resolve(w, ctx)
+        if p is None or not writable(p, ctx):
+            v.block("snakemake --directory %s would work (and write) outside your folder" % dirs[-1])
+            return
+        workdir = p
+    files = _smk_values(args, ["-s", "--snakefile"])
+    path = smk.find(workdir if not files else ctx.cwd, files[-1] if files else None)
+    # profiles: --profile, a workflow profile (profiles/default next to the Snakefile or in the working folder)
+    profiles = [x for x in _smk_values(args, ["--profile"]) if x != "none"]
+    wprof = _smk_values(args, ["--workflow-profile"])
+    if not wprof or wprof[-1] != "none":
+        names = wprof[-1:] or ["default"]
+        for base in [workdir] + ([os.path.dirname(path)] if path else []):
+            for nm in names:
+                cand = nm if os.path.isabs(nm) else os.path.join(base, nm)
+                if os.path.exists(cand):
+                    profiles.append(cand)
+                elif not os.path.isabs(nm) and os.path.exists(os.path.join(base, "profiles", nm)):
+                    profiles.append(os.path.join(base, "profiles", nm))
+    for prof in dict.fromkeys(profiles):
+        text = _smk_profile_text(prof, workdir)
+        if text is None:
+            v.confirm("snakemake uses the profile %s, which AskTim! cannot read; a profile can send jobs to a cluster or install software" % prof)
+            continue
+        found = {}
+        for m in re.finditer(r"(?m)^\s*([\w-]+)\s*:\s*(.*)$", text):
+            key = "--" + m.group(1).replace("_", "-")
+            val = m.group(2).strip().strip("'\"")
+            if val.lower() in ("false", "no", "off", "0", "none", "[]", ""):
+                if key not in ("--executor",):
+                    continue
+            found.setdefault(key, []).extend(re.split(r"[\s,\[\]]+", val.strip("[]")) if val else [])
+        _smk_check_settings(found, v, ctx, "the Snakemake profile %s" % os.path.basename(prof.rstrip(os.sep)) if prof else "a profile")
+    if path is None:
+        return  # snakemake will say that there is no Snakefile
+    if not inside(path, ctx.run_dir) and not any(inside(path, t) for t in ctx.tmp):
+        v.confirm("it runs the workflow %s, which is outside the agent's folder" % _show(path, ctx))
+    _check_workflow(path, v, ctx, depth, workdir, set())
+
+
+def _check_workflow(path, v, ctx, depth, workdir, seen):
+    """What the rules of a Snakefile (and the files it includes) would do, checked like any command."""
+    from . import snakefile as smk
+
+    if path in seen or len(seen) > 20:
+        return
+    seen.add(path)
+    try:
+        if os.path.getsize(path) > 2000000:
+            v.confirm("the Snakefile %s is too large for AskTim! to check" % os.path.basename(path))
+            return
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return
+    _check_workflow_text(text, path, v, ctx, depth, workdir, seen)
+
+
+def _check_workflow_text(text, path, v, ctx, depth, workdir, seen):
+    from . import snakefile as smk
+
+    wf = smk.parse(text, path)
+    name = os.path.basename(path)
+    here = os.path.dirname(path)
+    saved = (dict(ctx.vars), ctx.cwd)
+    ctx.cwd = workdir
+
+    def merge(sub, what):
+        for r in sub.reasons:
+            (v.block if sub.level == "block" else v.confirm)("%s: %s" % (what, r))
+        v.writes.extend(sub.writes)
+
+    try:
+        # Python at the top of the file runs whenever Snakemake reads it, even for a dry run
+        sub = Verdict()
+        _check_text_code(wf.top_code, sub, ctx, "Python")
+        for cmd in smk.shell_calls(wf.top_code):
+            if cmd is smk.DYNAMIC:
+                sub.confirm("a shell() call whose command AskTim! cannot read")
+            else:
+                _analyse_into(cmd, sub, ctx, depth + 1)
+        merge(sub, "the Snakefile %s" % name)
+        for d in wf.workdirs:
+            w = Word()
+            w.text = w.raw = d if d is not smk.DYNAMIC else "$X"
+            p = resolve(w, ctx) if d is not smk.DYNAMIC else None
+            if p is None or not writable(p, ctx):
+                v.block("the Snakefile %s: workdir: would make Snakemake work outside your folder" % name)
+            else:
+                ctx.cwd = workdir = p
+        if wf.remote_modules and not ctx.allow_network:
+            v.block("the Snakefile %s uses modules from the internet (%s), which is off for the agent" % (name, ", ".join(wf.remote_modules)))
+        elif wf.remote_modules:
+            v.confirm("the Snakefile %s runs rules downloaded from the internet (%s)" % (name, ", ".join(wf.remote_modules)))
+        if wf.storage:
+            if not ctx.allow_network:
+                v.block("the Snakefile %s keeps files on remote storage, over the internet, which is off for the agent" % name)
+            else:
+                v.confirm("the Snakefile %s keeps files on remote storage" % name)
+        for rule in wf.rules:
+            what = "the Snakefile's rule %s" % rule.name
+            sub = Verdict()
+            for _n, out in rule.outputs + rule.logs + rule.benchmarks:
+                if out is smk.DYNAMIC:
+                    continue
+                w = Word()
+                w.text = w.raw = smk.wildcard_free(out)
+                p = resolve(w, ctx)
+                if p is not None:
+                    _check_write_path(p, ctx, sub, "its output")
+            if rule.remote:
+                if not ctx.allow_network:
+                    sub.block("its files are on remote storage, over the internet, which is off for the agent")
+                else:
+                    sub.confirm("its files are on remote storage")
+            if rule.shell is smk.DYNAMIC:
+                sub.confirm("its shell command is built by Python code that AskTim! cannot read")
+            elif isinstance(rule.shell, str):
+                _analyse_into(smk.fill(rule.shell, rule), sub, ctx, depth + 1)
+            if rule.run:
+                _check_text_code(rule.run, sub, ctx, "Python")
+                for cmd in smk.shell_calls(rule.run):
+                    if cmd is smk.DYNAMIC:
+                        sub.confirm("a shell() call whose command AskTim! cannot read")
+                    else:
+                        _analyse_into(smk.fill(cmd, rule), sub, ctx, depth + 1)
+            if rule.script is not None:
+                if rule.script is smk.DYNAMIC:
+                    sub.confirm("it runs a script that AskTim! cannot work out")
+                else:
+                    w = Word()
+                    w.text = w.raw = rule.script if os.path.isabs(rule.script) else os.path.join(here, rule.script)
+                    ext = os.path.splitext(rule.script)[1].lower()
+                    lang = {".py": "Python", ".r": "R", ".rmd": "R", ".jl": "Julia", ".rs": None, ".sh": None}.get(ext)
+                    _check_script(w, sub, ctx, depth + 1, lang=lang)
+            if rule.notebook is not None:
+                sub.confirm("it runs a Jupyter notebook, which AskTim! does not check")
+            if rule.wrapper is not None:
+                if not ctx.allow_network:
+                    sub.block("it uses a Snakemake wrapper, which is downloaded from the internet (off for the agent); "
+                              "write a shell command with the installed tools instead")
+                else:
+                    sub.confirm("it runs a Snakemake wrapper, code downloaded from the internet (and wrappers usually need --use-conda)")
+            merge(sub, what)
+        for inc in wf.includes:
+            if inc is smk.DYNAMIC:
+                v.confirm("the Snakefile %s includes a file that AskTim! cannot work out" % name)
+                continue
+            p = os.path.realpath(inc if os.path.isabs(inc) else os.path.join(here, inc))
+            if os.path.isfile(p):
+                _check_workflow(p, v, ctx, depth, ctx.cwd, seen)
+    finally:
+        ctx.vars, ctx.cwd = saved
 
 
 # programs that write files next to their input (index files) or into a named prefix
@@ -1424,6 +1695,14 @@ def check_file_write(path, run_dir, content=None, student_dir=None, protect=None
         _check_text_code(content, sub, Context(run_dir, student_dir=student_dir), "Python" if p.endswith(".py") else "R")
         if sub.level == "block":
             v.notes.append("when it runs, the script would be refused: " + "; ".join(sub.reasons[:3]))
+    if content is not None and (os.path.basename(p) in ("Snakefile", "snakefile") or p.endswith(".smk")):
+        sub = Verdict()
+        sctx = Context(run_dir, student_dir=student_dir)
+        sctx.protect = protect
+        _check_workflow_text(content, p, sub, sctx, 0, os.path.dirname(p), set())
+        if sub.level != "ok":
+            v.notes.append("when snakemake runs it, the workflow would be %s: %s" % (
+                "refused" if sub.level == "block" else "stopped to ask the student", "; ".join(sub.reasons[:3])))
     return v, p
 
 

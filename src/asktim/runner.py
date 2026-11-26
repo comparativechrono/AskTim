@@ -67,8 +67,8 @@ def clean_env(extra=None, tmpdir=None):
     for k, v in os.environ.items():
         if SECRET_ENV.search(k) and k not in KEEP_ENV:
             continue
-        if k == "SSH_AUTH_SOCK":
-            continue
+        if k in ("SSH_AUTH_SOCK", "SNAKEMAKE_PROFILE"):
+            continue  # (a default Snakemake profile could send the agent's jobs to a cluster unseen)
         env[k] = v
     env.update({
         "PAGER": "cat", "MANPAGER": "cat", "GIT_PAGER": "cat", "SYSTEMD_PAGER": "", "LESS": "-FRX",
@@ -78,6 +78,11 @@ def clean_env(extra=None, tmpdir=None):
     })
     if tmpdir:
         env["TMPDIR"] = tmpdir
+        # In the sandbox the home folder is read-only, so programs that keep a cache there
+        # (Snakemake's source cache, matplotlib's and fontconfig's font caches, R) keep it in
+        # the private temporary folder instead. (Their settings in ~/.config can still be read.)
+        env["XDG_CACHE_HOME"] = os.path.join(tmpdir, ".cache")
+        env["XDG_STATE_HOME"] = os.path.join(tmpdir, ".local-state")
     if extra:
         env.update(extra)
     return env

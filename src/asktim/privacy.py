@@ -367,6 +367,8 @@ def _keep_special(s, strict):
     log lines, code. In strict mode only counts, checksums and log/error lines."""
     if _FLAGSTAT.match(s) or _SUM.match(s):
         return True
+    if _TIMESTAMP.match(s) or _PROGRESS.match(s) or _VERSION_LINE.match(s) or _HEAD_TAIL.match(s):
+        return True
     if _WC.match(s) and not all(_is_num(t) for t in _tokens(s)):
         label = _tokens(s)[-1]
         return label == "total" or _pathish(label)
@@ -417,12 +419,28 @@ def _keylike(key):
 _OPTION = re.compile(r"^--?[A-Za-z][\w\-]*=?")
 
 
+_SHELL_OPS = re.compile(r"\s(?:\|\|?|&&|;|>>?|<|2>>?|2>&1|&>)\s")
+
+
 def _commandlike(s):
-    """A command line (echoed by set -x, or written in a log): a program name and options."""
+    """A command line (echoed by set -x, or written in a log): a program name and options, or a program
+    whose output is piped or redirected (Snakemake's echo of a rule's shell command)."""
     toks = _tokens(s.lstrip("+$> "))
     if len(toks) < 2 or not re.match(r"^[A-Za-z_][\w.\-]*$", toks[0]):
         return False
-    return any(_OPTION.match(t) for t in toks[1:]) or toks[0] in ("cd", "mkdir", "cp", "mv", "rm", "cat", "for", "while", "if", "then", "do", "done", "fi")
+    return (any(_OPTION.match(t) for t in toks[1:]) or toks[0] in ("cd", "mkdir", "cp", "mv", "rm", "cat", "for", "while", "if", "then", "do", "done", "fi")
+            or bool(_SHELL_OPS.search(" %s " % s.strip())))
+
+
+# lines that are not data although they hold numbers: a date and time on its own (Snakemake writes one
+# before each job), progress ("3 of 7 steps (43%) done"), a version ("Python version: 3.13.1 (main, ...)")
+_TIMESTAMP = re.compile(
+    r"^\[?\s*(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s+)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?"
+    r"\s+(?:\d{4}\s+)?\d{1,2}:\d{2}(?::\d{2})?(?:\s+\d{4})?\s*\]?$"
+    r"|^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\]?$")
+_PROGRESS = re.compile(r"^\s*\d+\s+of\s+\d+\s+(?:steps?|jobs?|tasks?|files?|samples?|chunks?)\b.*\bdone\b", re.I)
+_VERSION_LINE = re.compile(r"^\s*[\w .()/-]{0,40}\bversion\b[\w .()/-]{0,20}:\s*\S.{0,150}$", re.I)
+_HEAD_TAIL = re.compile(r"^==> .{1,300} <==$")  # head and tail name each file they show
 
 
 def _gaps(line):
@@ -666,6 +684,13 @@ def _classify(lines, strict):
             s = lines[i].strip()
             if labels[i] is None and s and not (_textlike(s) or _keep_special(s, True)):
                 labels[i] = "values"
+    # Snakemake's table of jobs per rule ("Job stats:", "Job counts:" before version 7): rule names and counts
+    for i, L in enumerate(lines):
+        if L.strip() in ("Job stats:", "Job counts:"):
+            j = i + 1
+            while j < n and lines[j].strip() and j - i <= 300 and re.fullmatch(r"[\w\s\-.]+", lines[j]):
+                labels[j] = None
+                j += 1
     return labels
 
 
