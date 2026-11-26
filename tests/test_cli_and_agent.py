@@ -250,3 +250,27 @@ def test_agent_opens_a_file_in_an_installed_viewer(project, env, mock, tmp_path)
             break
         time.sleep(0.05)
     assert marker.read_text().strip().endswith("data/genes.csv")
+
+
+def test_the_agent_is_told_what_this_run_allows(project, env, mock):
+    """--web, --steps and --timeout must reach the model's instructions, not only the checks."""
+    mock.queue = [{"text": "Nothing to do."}]
+    p = run_asktim(["Agent", "--auto", "--web", "--steps", "7", "--timeout", "30", "download a reference"], env, project)
+    assert p.returncode == 0, p.stdout + p.stderr
+    system = mock.requests[0]["body"]["system"][0]["text"]
+    assert "allowed you to use the internet" in system and "There is no internet access" not in system
+    assert "at most 7 steps" in system and "longer than 30 seconds" in system
+    mock.queue = [{"text": "Nothing to do."}]
+    run_asktim(["Agent", "--auto", "download a reference"], env, project)
+    assert "There is no internet access" in mock.requests[-1]["body"]["system"][0]["text"]
+
+
+def test_the_agent_sees_which_programs_and_folders_there_are(project, env, mock):
+    (project / "asktim-runs").mkdir(exist_ok=True)
+    for i in range(1, 6):
+        (project / "asktim-runs" / ("%d-approve" % i)).mkdir()
+    mock.queue = [{"tools": [("run_command", {"command": "ls ../../asktim-runs; which bash sh", "why": "Look around."})]}, {"text": "Done."}]
+    p = run_asktim(["Agent", "--auto", "look around"], env, project)
+    assert p.returncode == 0, p.stdout + p.stderr
+    result = [b["content"] for m in mock.requests[-1]["body"]["messages"] for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"][0]
+    assert "withheld" not in result and "3-approve" in result and "/bin/bash" in result, result

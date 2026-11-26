@@ -139,7 +139,8 @@ class Agent(object):
         inv = inventory.gather()
         inv_lines = inventory.describe(inv, notebook_packages=self.nb.packages() if self.nb is not None else None)
         system = prompts.agent_system(inv_lines, self.cfg, self.mode, self._rel(self.work_dir) or ".", self._rel(self.student_dir) or ".",
-                                      notebook=self.nb is not None, sandbox_note=(self.sandbox_note + ".") if self.sandbox else "", script_name=self.script_name)
+                                      notebook=self.nb is not None, sandbox_note=(self.sandbox_note + ".") if self.sandbox else "", script_name=self.script_name,
+                                      allow_network=self.allow_network, max_steps=self.max_steps, timeout=self.timeout)
         tools = prompts.tool_specs(notebook=self.nb is not None)
         self.conv = Conversation()
         self.conv.user(self._first_message())
@@ -362,7 +363,7 @@ class Agent(object):
         step.update({"exit": res.exit_code, "seconds": round(res.duration, 2), "timed_out": res.timed_out, "lines": res.lines})
         raw = res.text()
         step["output_tail"] = privacy.mask_identity(res.last_lines(30))
-        fr = privacy.filter_output(raw, kind=verdict.output_kind, strict=self.strict)
+        fr = privacy.filter_output(raw, kind=verdict.output_kind, strict=self.strict, places=[self.work_dir] + safety.named_dirs(cmd, self.work_dir))
         self.withheld += fr.withheld
         step["withheld"] = fr.withheld
         body = privacy.shorten(fr.text, self.out_chars)

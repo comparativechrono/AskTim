@@ -287,6 +287,9 @@ _CODE = re.compile(r"^\s*(?:[A-Za-z_][\w.]*(?:\[[^\]]*\])?\s*(?:[-+*/]?=|<-)\s*\
 _SAM_HEADER = re.compile(r"^@(HD|SQ|RG|PG|CO)\t")
 _VCF_META_KEEP = re.compile(r"^##(fileformat|INFO=<ID=|FORMAT=<ID=|FILTER=<ID=|ALT=<ID=|source=)")
 _PATHLIKE = re.compile(r"^[\w.\-~/]*(/|\.[A-Za-z0-9]{1,8}(\.gz|\.bz2|\.xz|\.zst)?)$")
+# a path without an extension (/usr/bin/bwa, results/sample1): its parts are names, mostly with lower-case
+# letters - unlike a quality string, which may hold slashes too (/AAA/EEEE)
+_SLASH_PATH = re.compile(r"^(?:~|\.{1,2})?/?[\w.\-+@]+(?:/[\w.\-+@]+)*/?$")
 
 
 def _tokens(line):
@@ -359,7 +362,14 @@ def _codecall(s):
 
 
 def _pathish(s):
-    return bool(_PATHLIKE.match(s)) and len(s) <= 200
+    if len(s) > 200:
+        return False
+    if _PATHLIKE.match(s):
+        return True
+    if "/" in s and _SLASH_PATH.match(s):
+        parts = [x for x in s.split("/") if x and x not in ("~", ".", "..")]
+        return bool(parts) and sum(1 for x in parts if re.search(r"[a-z]", x)) >= max(1, 0.6 * len(parts))
+    return False
 
 
 def _keep_special(s, strict):
@@ -735,12 +745,34 @@ class FilterResult(object):
         return "%d of %d lines withheld (%s)" % (self.withheld, self.total, what)
 
 
-def filter_output(text, kind="default", strict=False):
+def _existing_names(lines, labels, places):
+    """Lines that name a file or folder that exists (ls, find and which print names, not data): kept."""
+    places = [p for p in places if p]
+    for i, ln in enumerate(lines):
+        if labels[i] not in ("lists of values", "values", "quality strings or encoded data"):
+            continue
+        name = ln.strip().rstrip("/*@=|")
+        if not name or len(name) > 300 or "\t" in name:
+            continue
+        try:
+            if os.path.isabs(name) or name.startswith("~"):
+                found = os.path.lexists(os.path.expanduser(name))
+            else:
+                found = any(os.path.lexists(os.path.join(p, name)) for p in places)
+        except (OSError, ValueError):
+            found = False
+        if found:
+            labels[i] = None
+
+
+def filter_output(text, kind="default", strict=False, places=()):
     """Filter the output of a command or of code before the AI sees it.
 
     kind: "default" - classify every line; "help" (help or version text), "code" (a script
     being read) and "summary" (counts, checksums, listings, flagstat ...) are only cleaned of
     secrets and personal details - except in strict mode, where every line is classified.
+    places: the folders the command ran in and looked at; a line that names a file or folder
+    there is a file name, not data (not in strict mode, which withholds file names).
     """
     text = ANSI.sub("", text or "")
     # progress bars: keep what a terminal finally shows on each line
@@ -755,6 +787,8 @@ def filter_output(text, kind="default", strict=False):
         labels = [None if (_textlike(ln.strip()) or not ln.strip() or _keep_special(ln.strip(), True) or ln.lstrip().startswith("-")) else "values" for ln in lines]
     else:
         labels = _classify(lines, strict)
+        if places and not strict:
+            _existing_names(lines, labels, places)
     vcf_meta = 0
     for i, ln in enumerate(lines):
         if labels[i] is None and ln.startswith("##"):

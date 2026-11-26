@@ -343,7 +343,7 @@ def notebook_context(cfg, attached=None):
         g.withheld += fr.withheld
         g.add("The last error, in this cell:\n```python\n%s\n```\nIt raised:\n```text\n%s\n```" % (clean(privacy.filter_code(err["cell"], strict=strict)[0])[-3000:], privacy.shorten(fr.text, 3000)), "the last error")
     if attached:
-        fr = privacy.filter_output(attached, kind="default", strict=strict)
+        fr = privacy.filter_output(attached, kind="default", strict=strict, places=[os.getcwd()])
         g.withheld += fr.withheld
         g.add("Text or code the student attached to the question (lines that look like data are withheld):\n```text\n%s\n```" % privacy.shorten(clean(fr.text), 6000), "the text under your question (%s)" % fr.summary())
     return g
@@ -635,7 +635,7 @@ class NotebookTools(object):
         step["exit"] = 0 if err is None else 1
         step["seconds"] = round(dt, 2)
         printed = "".join(buf)
-        fr = privacy.filter_output(printed, strict=self.cfg.strict)
+        fr = privacy.filter_output(printed, strict=self.cfg.strict, places=[os.getcwd(), agent.work_dir])
         agent.withheld += fr.withheld
         step["withheld"] = fr.withheld
         step["lines"] = fr.total

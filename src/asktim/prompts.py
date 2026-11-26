@@ -138,8 +138,10 @@ def chat_system(inventory_lines, cfg, notebook=False):
     return "\n".join(lines)
 
 
-def agent_system(inventory_lines, cfg, mode, run_dir_rel, student_dir_rel, notebook=False, sandbox_note="", script_name="analysis.sh"):
-    allow = bool(cfg.get("agent.allow_network"))
+def agent_system(inventory_lines, cfg, mode, run_dir_rel, student_dir_rel, notebook=False, sandbox_note="", script_name="analysis.sh",
+                 allow_network=None, max_steps=None, timeout=None):
+    # what this run allows (--web, --steps, --timeout), not only what the settings say
+    allow = bool(cfg.get("agent.allow_network")) if allow_network is None else bool(allow_network)
     network = (
         "The student has allowed you to use the internet to download public data and references (curl, wget, git clone, SRA tools). "
         "Never upload or send anything: posting data, scp, git push and the like are blocked."
@@ -155,8 +157,8 @@ def agent_system(inventory_lines, cfg, mode, run_dir_rel, student_dir_rel, noteb
         "input files where they are (use paths such as ../../data/reads.fq or absolute paths); to index an input, link it into your "
         "folder first (ln -s ../../data/ref.fa .) and index the link.{sandbox}"
     ).format(run=run_dir_rel, student=student_dir_rel, sandbox=(" " + sandbox_note) if sandbox_note else "")
-    max_steps = int(cfg.get("agent.max_steps") or 25)
-    timeout = int(cfg.get("agent.command_timeout") or 600)
+    max_steps = int(max_steps or cfg.get("agent.max_steps") or 25)
+    timeout = int(timeout or cfg.get("agent.command_timeout") or 600)
     rules = [r.format(network=network, folder=folder, timeout=timeout, max_steps=max_steps) for r in AGENT_RULES]
     lines = [AGENT_ROLE, "", "How you work:"] + ["- " + r for r in rules]
     if notebook:

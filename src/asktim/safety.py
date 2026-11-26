@@ -1644,6 +1644,24 @@ def _analyse_into(text, v, ctx, depth=0):
 _INVISIBLE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 
 
+def named_dirs(command, cwd, limit=20):
+    """The existing folders that a command names (ls ../../data, find results): the names in its output
+    are names of things there. (For the data filter, which keeps names of files that exist.)"""
+    p = tokenize(command)
+    ctx = Context(cwd)
+    out = []
+    for c in split_commands(p):
+        for w in c.words[1:]:
+            if w.dynamic or w.text.startswith("-"):
+                continue
+            q = resolve(w, ctx)
+            if q and q not in out and os.path.isdir(q):
+                out.append(q)
+                if len(out) >= limit:
+                    return out
+    return out
+
+
 def check(command, run_dir, allow_network=False, student_dir=None, cwd=None, protect=None):
     """The verdict on a command the agent wants to run in run_dir."""
     v = Verdict()

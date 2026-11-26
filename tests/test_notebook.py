@@ -127,3 +127,17 @@ def test_the_demo_notebook_runs_and_sends_no_reads(tmp_path, env, mock):
     reads = [ln for ln in (work / "reads.fastq").read_text().splitlines()[1::4]]
     sent = json.dumps([r["body"] for r in mock.requests])
     assert len(mock.requests) == 2 and not any(r[:30] in sent for r in reads)
+
+
+def test_import_AskTim_works_too(project, env, mock):
+    """Students type the name they installed: `import AskTim` switches the command on as `import asktim` does."""
+    e = dict(env, PATH=os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", ""))
+    k = Kernel(env=e, cwd=str(project))
+    try:
+        r = k.run("import AskTim\nprint(AskTim.__version__ == __import__('asktim').__version__)")
+        assert r["status"] == "ok" and r["stream"].strip().endswith("True"), r
+        mock.queue = [{"text": "Hello."}]
+        r = k.run('AskTim! "does this work?"')
+        assert r["status"] == "ok" and not r["errors"] and len(mock.requests) == 1, r
+    finally:
+        k.stop()
