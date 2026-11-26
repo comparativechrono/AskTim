@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "AskTim"
-# the version is __version__ in src/asktim/__init__.py (a release's tag must match it: v0.1.0)
+# the version is __version__ in src/asktim/_version.py (a release's tag must match it: v0.1.1)
 dynamic = ["version"]
 description = "AskTim! - an AI helper for bioinformatics students that keeps their data out of the AI, at the command line and in Jupyter and Colab notebooks."
 readme = "README.md"
@@ -52,9 +52,12 @@ Issues = "https://github.com/comparativechrono/AskTim/issues"
 # The command students type, `AskTim! "my question"`, is a small script file rather than an entry
 # point: older versions of pip (23.0 and before) fail on an entry point whose name holds "!".
 script-files = ["bin/AskTim!"]
+# `import AskTim` works as well as `import asktim` (students type the name they installed)
+py-modules = ["AskTim"]
 
 [tool.setuptools.dynamic]
-version = { attr = "asktim.__version__" }
+# (its own file: on macOS and Windows, which ignore case in file names, a lookup of "asktim" can find AskTim.py)
+version = { attr = "asktim._version.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

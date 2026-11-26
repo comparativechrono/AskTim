@@ -176,3 +176,20 @@ def test_sequences_in_alignments_and_groups_are_withheld():
     for line in ["WARNING: THE FILE IS MISSING AND WILL BE SKIPPED", "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG AGAIN AND AGAIN",
                  "a cat at a tag", "Adapter sequence: AGATCGGAAGAGC", "Total reads: 1000 Mapped: 950 (95.00%)", "[main] CMD: bwa mem -t 4 ref.fa r1.fq"]:
         assert filter_output(line).withheld == 0, line
+
+
+def test_paths_and_names_of_files_are_not_data(tmp_path):
+    from asktim.privacy import filter_output
+
+    out = "/usr/bin/bwa\n/usr/bin/samtools\n/usr/local/bin/bcftools\n"
+    assert filter_output(out).withheld == 0  # which: paths (/usr/bin/bwa once looked like a quality string)
+    runs = tmp_path / "asktim-runs"
+    for i in range(1, 7):
+        (runs / ("%d-approve" % i)).mkdir(parents=True)
+    listing = "\n".join("%d-approve" % i for i in range(1, 7)) + "\n"
+    assert filter_output(listing).withheld == 6  # names alone could be a list of IDs ...
+    assert filter_output(listing, places=[str(runs)]).withheld == 0  # ... but these exist where ls looked
+    assert filter_output(listing, places=[str(runs)], strict=True).withheld == 6  # strict mode withholds file names
+    ids = "\n".join("SAMPLE%03d" % i for i in range(10)) + "\n"
+    assert filter_output(ids, places=[str(runs)]).withheld == 10  # names that are not files stay withheld
+    assert filter_output("/AAA/EEEE/EE<E//EEE\n" * 3).withheld == 3  # quality strings with slashes too

@@ -93,7 +93,7 @@ def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, 
         desc = fileinfo.describe(f, strict=strict)
         g.add("A file the student asked about: " + _clean(g, desc, strict), "a description of %s (its structure, not its contents)" % os.path.basename(f))
     if stdin_text:
-        fr = privacy.filter_output(stdin_text, strict=strict)
+        fr = privacy.filter_output(stdin_text, strict=strict, places=[cwd])
         g.withheld += fr.withheld
         body = privacy.shorten(fr.text, 6000)
         g.add("Output the student piped into AskTim! (lines that look like data are withheld):\n```text\n%s\n```" % body,
