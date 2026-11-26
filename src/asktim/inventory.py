@@ -129,11 +129,48 @@ def _cache_file():
     return os.path.join(paths.cache_dir(), "inventory.json")
 
 
+def _watched_dirs():
+    """The folders whose contents say what is installed: the folders on PATH, and Python's and R's
+    package folders. Installing a program or a package (apt-get, pip, install.packages) changes them."""
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+    try:
+        import site
+        import sysconfig
+
+        dirs += [sysconfig.get_paths().get(k, "") for k in ("purelib", "platlib")]
+        dirs.append(site.getusersitepackages() if hasattr(site, "getusersitepackages") else "")
+    except Exception:
+        pass
+    for k in ("R_LIBS", "R_LIBS_USER", "R_LIBS_SITE"):
+        dirs += os.environ.get(k, "").split(os.pathsep)
+    dirs += ["/usr/local/lib/R/site-library", "/usr/lib/R/site-library", "/usr/lib/R/library"]
+    return [d for d in dict.fromkeys(dirs) if d]
+
+
 def _fingerprint():
     h = hashlib.sha1()
     for k in ("PATH", "CONDA_PREFIX", "VIRTUAL_ENV", "LOADEDMODULES"):
         h.update((os.environ.get(k, "") + "\0").encode("utf-8", "replace"))
+    for d in _watched_dirs():
+        try:
+            stamp = os.stat(d).st_mtime_ns
+        except (OSError, ValueError):
+            stamp = -1
+        h.update(("%s\0%d\0" % (d, stamp)).encode("utf-8", "replace"))
     return h.hexdigest()
+
+
+def _still_right(data):
+    """A quick check of a saved inventory: each program in it is still there, and none that it lacks has
+    appeared since (some file systems do not show a new file in their folder's time)."""
+    tools = data.get("tools") or {}
+    for name in tools:
+        if not shutil.which(name):
+            return False
+    for name, _cat, _args in TOOLS:
+        if name not in tools and shutil.which(name):
+            return False
+    return True
 
 
 def _env():
@@ -295,7 +332,8 @@ def gather(refresh=False, max_age=12 * 3600):
         try:
             with open(cf, encoding="utf-8") as f:
                 data = json.load(f)
-            if data.get("fingerprint") == fp and time.time() - data.get("time", 0) < max_age and data.get("version") == 2:
+            if (data.get("fingerprint") == fp and time.time() - data.get("time", 0) < max_age and data.get("version") == 2
+                    and _still_right(data)):
                 return data
         except (OSError, ValueError):
             pass

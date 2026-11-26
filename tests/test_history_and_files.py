@@ -115,3 +115,22 @@ def test_listing(project):
     out = fileinfo.listing(str(project))
     assert "data/" in out and "genes.csv" in out
     assert "names withheld" in fileinfo.listing(str(project), strict=True)
+
+
+def test_the_inventory_notices_programs_installed_later(tmp_path, monkeypatch):
+    """`apt-get install bcftools` changes neither PATH nor conda, but AskTim! must notice it at once."""
+    from asktim import inventory
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("ASKTIM_HOME", str(tmp_path / "home"))
+    first = inventory.gather()
+    assert "bcftools" not in first["tools"]
+    assert inventory.gather()["time"] == first["time"]  # nothing changed: the saved inventory is used
+    prog = bin_dir / "bcftools"
+    prog.write_text("#!/bin/sh\necho 'bcftools 1.19'\n")
+    prog.chmod(0o755)
+    assert inventory.gather()["tools"]["bcftools"]["version"] == "1.19"
+    prog.unlink()
+    assert "bcftools" not in inventory.gather()["tools"]
