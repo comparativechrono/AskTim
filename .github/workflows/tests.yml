@@ -18,11 +18,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         os: [ubuntu-latest]
         include:
-          # Python 3.8 is no longer built for the newest runners
+          # Python 3.8 and 3.9 are not built for the newest Ubuntu
           - python: "3.8"
+            os: ubuntu-22.04
+          - python: "3.9"
             os: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7

@@ -7,6 +7,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -126,7 +127,8 @@ def test_open_file_can_start_an_installed_viewer(tmp_path, monkeypatch):
             break
         time.sleep(0.05)
     assert marker.read_text().split() == [str(bam), "no-key"]  # the program gets no API keys
-    monkeypatch.delenv("DISPLAY")
-    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-    ok, how = viewers.launch(str(bam), "igv")
-    assert not ok and "no DISPLAY" in how
+    if sys.platform.startswith("linux"):  # a Mac has a screen whatever DISPLAY says
+        monkeypatch.delenv("DISPLAY")
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        ok, how = viewers.launch(str(bam), "igv")
+        assert not ok and "no DISPLAY" in how
