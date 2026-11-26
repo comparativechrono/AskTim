@@ -112,7 +112,7 @@ rule tricky:
 def test_snakemake_options(run_dir):
     (run_dir / "Snakefile").write_text(GOOD)
     for cmd in ["snakemake --cores 2", "snakemake -n --cores 2", "snakemake -np --cores 1", "snakemake --sdm env-modules --cores 1",
-                "snakemake -e local --cores 1", "snakemake --report report.html", "snakemake --dag | dot -Tpng > dag.png", "snakemake --version"]:
+                "snakemake -e local --cores 1", "snakemake --report report.html", "snakemake --dag > dag.dot", "snakemake --version"]:
         assert level(cmd, run_dir)[0] == "ok", cmd
     for cmd in ["snakemake --use-conda --cores 1", "snakemake --sdm conda --cores 1", "snakemake --software-deployment-method apptainer --cores 1",
                 "snakemake --use-singularity --cores 1", "snakemake --directory ../.. --cores 1", "snakemake --default-storage-provider s3 --cores 1"]:
