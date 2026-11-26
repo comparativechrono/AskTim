@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+# The AskTim! command. (When AskTim! is installed with pip, the line above is set to the
+# Python it was installed into.) `asktim` and `python -m asktim` are the same command.
+import sys
+
+from asktim.cli import main
+
+sys.exit(main())

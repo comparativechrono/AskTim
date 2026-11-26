@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "AskTim"
+# the version is __version__ in src/asktim/__init__.py (a release's tag must match it: v0.1.0)
+dynamic = ["version"]
+description = "AskTim! - an AI helper for bioinformatics students that keeps their data out of the AI, at the command line and in Jupyter and Colab notebooks."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "Tim Hearn" }]
+keywords = ["bioinformatics", "teaching", "AI", "assistant", "agent", "jupyter", "colab", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Environment :: Console",
+    "Framework :: Jupyter",
+    "Framework :: IPython",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Education",
+]
+# No required dependencies: AskTim! uses only the Python standard library, so it installs
+# cleanly on lab machines, HPC clusters and Colab. IPython is used when it is there.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest", "pexpect", "ipython", "ipykernel", "nbformat", "nbclient"]
+
+[project.scripts]
+# The same command as AskTim!, without the "!" (for Windows, and for scripts where "!" is awkward).
+asktim = "asktim.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/comparativechrono/AskTim"
+Source = "https://github.com/comparativechrono/AskTim"
+Issues = "https://github.com/comparativechrono/AskTim/issues"
+
+[tool.setuptools]
+# The command students type, `AskTim! "my question"`, is a small script file rather than an entry
+# point: older versions of pip (23.0 and before) fail on an entry point whose name holds "!".
+script-files = ["bin/AskTim!"]
+
+[tool.setuptools.dynamic]
+version = { attr = "asktim.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
