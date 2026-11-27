@@ -157,3 +157,22 @@ def test_import_AskTim_works_too(project, env, mock):
         assert r["status"] == "ok" and not r["errors"] and len(mock.requests) == 1, r
     finally:
         k.stop()
+
+
+def test_notebook_is_quiet_and_can_share_data(kernel, mock):
+    pytest.importorskip("pandas")
+    kernel.run("import pandas as pd\ndf = pd.read_csv('data/genes.csv')")
+    mock.queue = [{"text": "df has the genes."}, {"text": "df has the genes."}, {"text": "df has the genes."}]
+    r = kernel.run('AskTim! "what is in df?"')
+    assert "Sent with your question" not in r["stream"] and "data stayed on this computer" not in kernel.text(r)
+    assert "YAL000C" not in json.dumps(mock.requests[-1]["body"])  # a value of the table
+    r = kernel.run('AskTim! -v "what is in df?"')
+    assert "Sent with your question" in r["stream"] and "data stayed on this computer" in kernel.text(r)
+    # the data filter off, from a cell: the AI gets a preview of the variables, until it is on again
+    r = kernel.run("AskTim! privacy off")
+    assert "now off" in r["stream"], r
+    kernel.run('AskTim! "what is in df?"')
+    body = json.dumps(mock.requests[-1]["body"])
+    assert "YAL000C" in body and "data filter off" in body
+    assert "student" not in body.lower()
+    kernel.run("AskTim! privacy on")

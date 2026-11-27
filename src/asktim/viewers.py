@@ -1,7 +1,7 @@
-"""Programs with windows that the agent may start to show the student a file (open_file).
+"""Programs with windows that the agent may start to show the user a file (open_file).
 
-Only programs that are installed can be used, and the student is asked first every time. They run
-outside the sandbox, as programs the student starts themselves do (they need the screen, and some -
+Only programs that are installed can be used, and the user is asked first every time. They run
+outside the sandbox, as programs the user starts themselves do (they need the screen, and some -
 IGV, for example - fetch genomes from the internet); their environment has no API keys or tokens.
 """
 
@@ -72,7 +72,7 @@ def describe():
     """A line for the agent: which programs it could start, if any."""
     ok, why = can_show_windows()
     if not ok:
-        return "open_file cannot start programs here: %s. Tell the student which file to open instead." % why
+        return "open_file cannot start programs here: %s. Tell the user which file to open instead." % why
     progs = installed()
     if not progs:
         return "No programs with windows that AskTim! can start are installed; open_file uses the computer's default program for the file."

@@ -114,6 +114,25 @@ def _estimate(path, gz, sample, per_record_lines):
     return int(approx_uncompressed / (len(sample) / float(lines)) / per_record_lines)
 
 
+def start_of(path, max_lines=200, max_chars=20000):
+    """The first lines of a text file (read through gzip), or None for a folder or a binary file: what
+    goes with a question about a file when the user has turned AskTim!'s data filter off."""
+    if not os.path.isfile(path):
+        return None
+    head = _magic(path)
+    gz = head[:2] == b"\x1f\x8b"
+    if path.lower().endswith((".bam", ".cram", ".bcf", ".sra")) or (gz and _bam_inside(path)):
+        return None
+    data = _read_sample(path, gz, limit=max_chars + 1)
+    if not data or b"\x00" in data[:8192]:
+        return None
+    text = data[:max_chars].decode("utf-8", "replace")
+    lines = text.split("\n")
+    more = len(data) > max_chars or len(lines) > max_lines
+    out = "\n".join(lines[:max_lines])
+    return out.rstrip("\n") + ("\n… (only the start of the file is sent)" if more else "")
+
+
 def describe(path, strict=False, base=None):
     """A short description of a file or folder, safe to send to the AI."""
     shown = paths.pretty(path) if base is None else os.path.relpath(path, base)

@@ -33,14 +33,14 @@ def ask(cfg, ui, question, files=(), stdin_text=None, new=False, dry_run=False, 
     question = (question or "").strip()
     if not question and stdin_text:
         question = "What does this mean, and what should I do?"
-    # text pasted into a question: data lines are withheld as from any output
-    q_clean, n_q, pasted = privacy.clean_question(question, strict=cfg.strict)
+    # text pasted into a question: data lines are withheld as from any output (unless the data filter is off)
+    q_clean, n_q, pasted = privacy.clean_question(question, strict=cfg.strict, share_data=cfg.share_data)
     inv = inventory.gather()
     system = prompts.chat_system(inventory.describe(inv), cfg, notebook=False)
     g = context.terminal(cfg, files=files, stdin_text=stdin_text, send_history=send_history, history_n=history_n, send_files=send_files)
     g.redactions += n_q
     g.withheld += pasted
-    if pasted:
+    if pasted and ui.verbose:
         ui.t.warn("AskTim! kept %d piece%s of data in your question from the AI (lines or records that look like data); "
                   "it is told only what kind of data was there." % (pasted, "" if pasted == 1 else "s"))
     items = [] if new else logbook.load_chat(int(cfg.get("chat_memory_minutes") or 60))
@@ -69,6 +69,7 @@ def ask(cfg, ui, question, files=(), stdin_text=None, new=False, dry_run=False, 
             ui.t.note(str(e))
             return None
         raise
+    ui.data_off_reminder(cfg)
     ui.chat_header(g.summary(), prov.describe())
     ui.thinking()
     try:
@@ -102,6 +103,6 @@ def ask(cfg, ui, question, files=(), stdin_text=None, new=False, dry_run=False, 
 
         sh = history.detect_shell()
         if sh in ("bash", "zsh") and shell_setup.installed(sh):
-            ui.t.note("Alt+A puts these commands on your command line, one at a time.")
+            ui.note("Alt+A puts these commands on your command line, one at a time.")
     logbook.add({"mode": "chat", "question": q_clean, "model": turn.model, "provider": prov.name, "sent": g.sent, "cwd": context.paths.pretty(os.getcwd())}, cfg)
     return turn.text

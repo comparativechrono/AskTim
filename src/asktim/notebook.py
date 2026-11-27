@@ -280,7 +280,7 @@ def _cells_run(max_cells=15, max_chars=6000):
     return list(reversed(out)), len(cells)
 
 
-def variables_text(strict=False, limit=40):
+def variables_text(strict=False, limit=40, share_data=False):
     ip = _STATE["ip"]
     ns = ip.user_ns
     hidden = set(getattr(ip, "user_ns_hidden", {}) or {})
@@ -288,7 +288,7 @@ def variables_text(strict=False, limit=40):
     for name in sorted(ns):
         if name.startswith("_") or name in hidden or name in ("In", "Out", "exit", "quit", "get_ipython", "asktim"):
             continue
-        d = context.describe_value(name, ns[name], strict=strict)
+        d = context.describe_value(name, ns[name], strict=strict, share_data=share_data)
         if d:
             lines.append(d)
         if len(lines) >= limit:
@@ -314,38 +314,44 @@ def _packages():
 
 def notebook_context(cfg, attached=None):
     strict = cfg.strict
-    g = context.Gathered()
+    share = cfg.share_data  # the user has turned the data filter off
+    g = context.Gathered(share_data=share)
 
     def clean(t):
-        t, n = privacy.clean(t, strict=strict)
+        t, n = privacy.clean(t, strict=strict, share_data=share)
         g.redactions += n
         return t
 
     fe = {"colab": "Google Colab", "vscode": "a VS Code notebook", "jupyter": "a Jupyter notebook"}[frontend()]
-    g.add("The student is working in %s; the notebook's code runs in %s." % (fe, clean(paths.pretty(os.getcwd()))), None)
+    g.add("The user is working in %s; the notebook's code runs in %s." % (fe, clean(paths.pretty(os.getcwd()))), None)
     if cfg.get("send_file_names", True):
         g.add("Files in that folder (names and sizes only):\n" + clean(fileinfo.listing(os.getcwd(), strict=strict)), "names of the files in the notebook's folder")
     cells, total = _cells_run()
     if cells:
         parts = []
         for c in cells:
-            c, w = privacy.filter_code(c, strict=strict)  # data typed into the code (a pasted table, a list of numbers)
+            c, w = privacy.filter_code(c, strict=strict, share_data=share)  # data typed into the code (a pasted table, a list of numbers)
             g.withheld += w
             parts.append("# --- cell ---\n" + clean(c))
         body = "\n\n".join(parts)
-        g.add("The code of the last %d cells the student ran (of %d), oldest first:\n```python\n%s\n```" % (len(cells), total, body), "the code of your last %d cells" % len(cells))
-    vs = variables_text(strict=strict)
-    if vs:
-        g.add("The student's variables (names, types and shapes only - not their values):\n" + "\n".join("  " + clean(v) for v in vs), "the names, types and shapes of your variables")
+        g.add("The code of the last %d cells the user ran (of %d), oldest first:\n```python\n%s\n```" % (len(cells), total, body), "the code of your last %d cells" % len(cells))
+    vs = variables_text(strict=strict, share_data=share)
+    if vs and share:
+        g.add("The user's variables (with a preview of each):\n" + "\n".join("  " + clean(v) for v in vs), "your variables, with a preview of each")
+    elif vs:
+        g.add("The user's variables (names, types and shapes only - not their values):\n" + "\n".join("  " + clean(v) for v in vs), "the names, types and shapes of your variables")
     err = _STATE["last_error"]
     if err and time.time() - err["time"] < 3600:
-        fr = privacy.filter_output(err["traceback"], kind="default", strict=strict)
+        fr = privacy.filter_output(err["traceback"], kind="default", strict=strict, share_data=share)
         g.withheld += fr.withheld
-        g.add("The last error, in this cell:\n```python\n%s\n```\nIt raised:\n```text\n%s\n```" % (clean(privacy.filter_code(err["cell"], strict=strict)[0])[-3000:], privacy.shorten(fr.text, 3000)), "the last error")
+        g.add("The last error, in this cell:\n```python\n%s\n```\nIt raised:\n```text\n%s\n```" % (clean(privacy.filter_code(err["cell"], strict=strict, share_data=share)[0])[-3000:], privacy.shorten(fr.text, 3000)), "the last error")
     if attached:
-        fr = privacy.filter_output(attached, kind="default", strict=strict, places=[os.getcwd()])
+        fr = privacy.filter_output(attached, kind="default", strict=strict, places=[os.getcwd()], share_data=share)
         g.withheld += fr.withheld
-        g.add("Text or code the student attached to the question (lines that look like data are withheld):\n```text\n%s\n```" % privacy.shorten(clean(fr.text), 6000), "the text under your question (%s)" % fr.summary())
+        if share:
+            g.add("Text or code the user attached to the question:\n```text\n%s\n```" % privacy.shorten(clean(fr.text), 6000), "the text under your question")
+        else:
+            g.add("Text or code the user attached to the question (lines that look like data are withheld):\n```text\n%s\n```" % privacy.shorten(clean(fr.text), 6000), "the text under your question (%s)" % fr.summary())
     return g
 
 
@@ -396,15 +402,17 @@ def _footer(blocks):
     return "\n\n---\n<small>Code blocks: %s. %s.</small>" % (names, how)
 
 
-def nb_ask(question, attached=None, new=False, model=None, files=()):
+def nb_ask(question, attached=None, new=False, model=None, files=(), verbose=None):
     from .render import code_blocks
 
-    cfg = _config.Config()
+    cfg = _config.Config({"verbose": True} if verbose else None)
+    verbose = cfg.verbose
     if new:
         _STATE["chat"] = Conversation()
-    q_clean, n, pasted = privacy.clean_question(question, strict=cfg.strict)
-    if pasted:
-        print(_ansi("AskTim! withheld %d line%s of your question that look like data." % (pasted, "" if pasted == 1 else "s"), "33"))
+    q_clean, n, pasted = privacy.clean_question(question, strict=cfg.strict, share_data=cfg.share_data)
+    if pasted and verbose:
+        print(_ansi("AskTim! kept %d piece%s of data in your question from the AI (lines or records that look like data); "
+                    "it is told only what kind of data was there." % (pasted, "" if pasted == 1 else "s"), "33"))
     if not q_clean.strip() and attached:
         q_clean = "What does this mean, and what should I do?"
     if not q_clean.strip():
@@ -419,7 +427,7 @@ def nb_ask(question, attached=None, new=False, model=None, files=()):
     g.redactions += n
     g.withheld += pasted
     for f in files or ():
-        g.add("A file the student asked about: " + privacy.clean(fileinfo.describe(f, strict=cfg.strict))[0], "a description of %s" % os.path.basename(f))
+        g.add(*context.about_file(g, f, cfg.strict))
     try:
         prov = make_provider(cfg, model=model)
     except ProviderError as e:
@@ -428,7 +436,10 @@ def nb_ask(question, attached=None, new=False, model=None, files=()):
         tips = offline.explain_text((_STATE["last_error"] or {}).get("error", "") + "\n" + (attached or ""))
         _md("**AskTim!** has no AI set up yet.\n\n%s\n\n%s" % (safe_markdown("\n".join("- " + t for t in tips)) if tips else "", str(e).replace("\n\n", "\n\n").replace("    AskTim!", "`AskTim!").replace("Claude\n", "Claude`\n")))
         return None
-    print(_ansi(g.summary(), "90"))
+    if verbose:
+        print(_ansi(g.summary(), "90"))
+    else:
+        _data_off_reminder(cfg)
     conv = _STATE["chat"]
     conv.user(g.text() + "Question: " + q_clean)
     st = _Streamer()
@@ -447,9 +458,20 @@ def nb_ask(question, attached=None, new=False, model=None, files=()):
     conv.items[:] = conv.items[-20:]
     blocks = code_blocks(turn.text)
     _STATE["answers"] = blocks
-    st.done(_footer(blocks) + "\n\n<small>%s · %s</small>" % (html.escape(prov.describe()), "data stayed on this computer"))
+    if verbose:
+        st.done(_footer(blocks) + "\n\n<small>%s · %s</small>" % (html.escape(prov.describe()), "the data filter is off" if cfg.share_data else "data stayed on this computer"))
+    else:
+        st.done()
     logbook.add({"mode": "chat", "question": q_clean, "model": turn.model, "provider": prov.name, "sent": g.sent, "cwd": paths.pretty(os.getcwd()), "notebook": True}, cfg)
     return None
+
+
+def _data_off_reminder(cfg):
+    """With the data filter off: say so once a day (with -v, every answer says it)."""
+    from .ui import DATA_OFF_REMINDER, data_off_reminder_due
+
+    if data_off_reminder_due(cfg):
+        print(_ansi(DATA_OFF_REMINDER, "33"))
 
 
 def _insert_block(n):
@@ -509,18 +531,19 @@ class NotebookTools(object):
 
     def state_text(self):
         lines = []
-        vs = variables_text(strict=self.cfg.strict)
+        share = self.cfg.share_data
+        vs = variables_text(strict=self.cfg.strict, share_data=share)
         if vs:
-            lines.append("The student's notebook variables (names, types and shapes only):")
-            lines += ["  " + privacy.clean(v, strict=self.cfg.strict)[0] for v in vs]
+            lines.append("The user's notebook variables (with a preview of each):" if share else "The user's notebook variables (names, types and shapes only):")
+            lines += ["  " + privacy.clean(v, strict=self.cfg.strict, share_data=share)[0] for v in vs]
         cells, total = _cells_run(max_cells=8, max_chars=3000)
         if cells:
-            lines.append("The code of the student's last %d cells (of %d):" % (len(cells), total))
-            lines.append("```python\n%s\n```" % "\n\n".join(privacy.clean(privacy.filter_code(c, strict=self.cfg.strict)[0], strict=self.cfg.strict)[0] for c in cells))
+            lines.append("The code of the user's last %d cells (of %d):" % (len(cells), total))
+            lines.append("```python\n%s\n```" % "\n\n".join(privacy.clean(privacy.filter_code(c, strict=self.cfg.strict, share_data=share)[0], strict=self.cfg.strict, share_data=share)[0] for c in cells))
         err = _STATE["last_error"]
         if err and time.time() - err["time"] < 3600:
-            fr = privacy.filter_output(err["traceback"], strict=self.cfg.strict)
-            lines.append("The student's last error:\n```text\n%s\n```" % privacy.shorten(fr.text, 2000))
+            fr = privacy.filter_output(err["traceback"], strict=self.cfg.strict, share_data=share)
+            lines.append("The user's last error:\n```text\n%s\n```" % privacy.shorten(fr.text, 2000))
         lines.append("Notebook: %s; its folder is %s." % (frontend(), paths.pretty(os.getcwd())))
         return "\n".join(lines)
 
@@ -534,9 +557,9 @@ class NotebookTools(object):
             step["decision"] = "auto"
             if v not in ns:
                 return ToolResult(call.id, name, "There is no variable called %s." % v, True)
-            d = context.describe_value(v, ns[v], strict=self.cfg.strict) or v
+            d = context.describe_value(v, ns[v], strict=self.cfg.strict, share_data=self.cfg.share_data) or v
             extra = self._missing(ns[v]) if not self.cfg.strict else ""
-            msg = privacy.clean(d + extra, strict=self.cfg.strict)[0]
+            msg = privacy.clean(d + extra, strict=self.cfg.strict, share_data=self.cfg.share_data)[0]
             step["sent"] = msg
             agent.ui.note("AskTim! described the variable %s to the AI: %s" % (v, msg))
             return ToolResult(call.id, name, msg)
@@ -601,8 +624,8 @@ class NotebookTools(object):
         if decision == "blocked":
             return ToolResult(call.id, call.name, "Not run: AskTim! does not allow this code – %s." % "; ".join(verdict.reasons), True)
         if decision == "refuse":
-            return ToolResult(call.id, call.name, "Not run: the student refused this step." + (" Their reason: %s" % comment if comment else ""), True)
-        prefix = ("The student allowed this step, with a comment: %s\n" % comment) if comment else ""
+            return ToolResult(call.id, call.name, "Not run: the user refused this step." + (" Their reason: %s" % comment if comment else ""), True)
+        prefix = ("The user allowed this step, with a comment: %s\n" % comment) if comment else ""
         ns = self.ip.user_ns
         before = {k: id(v) for k, v in ns.items() if not k.startswith("_")}
         buf = []
@@ -622,7 +645,7 @@ class NotebookTools(object):
         t0 = time.time()
         _STATE["nested"] += 1
         # the code runs in the agent's folder, as its commands do (and as AskTim! checked it): a relative
-        # path it writes must not land in the student's folder. The notebook's own folder comes back after.
+        # path it writes must not land in the user's folder. The notebook's own folder comes back after.
         old_cwd = os.getcwd()
         try:
             pub.publish = publish
@@ -643,27 +666,28 @@ class NotebookTools(object):
         step["exit"] = 0 if err is None else 1
         step["seconds"] = round(dt, 2)
         printed = "".join(buf)
-        fr = privacy.filter_output(printed, strict=self.cfg.strict, places=[os.getcwd(), agent.work_dir])
+        share = self.cfg.share_data
+        fr = privacy.filter_output(printed, strict=self.cfg.strict, places=[os.getcwd(), agent.work_dir], share_data=share)
         agent.withheld += fr.withheld
         step["withheld"] = fr.withheld
         step["lines"] = fr.total
         step["output_tail"] = privacy.mask_identity("\n".join(printed.splitlines()[-30:]))
-        parts = [prefix + ("It ran without an error (%.1f s)." % dt if err is None else "It raised %s: %s" % (type(err).__name__, privacy.clean(str(err), strict=self.cfg.strict)[0][:500]))]
+        parts = [prefix + ("It ran without an error (%.1f s)." % dt if err is None else "It raised %s: %s" % (type(err).__name__, privacy.clean(str(err), strict=self.cfg.strict, share_data=share)[0][:500]))]
         if err is not None:
             tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
-            tf = privacy.filter_output(tb, strict=self.cfg.strict)
+            tf = privacy.filter_output(tb, strict=self.cfg.strict, share_data=share)
             parts.append("Traceback (data lines withheld):\n" + privacy.shorten(tf.text, 2500))
         if printed.strip():
             parts.append("What it printed (%d line%s%s):\n%s" % (fr.total, "" if fr.total == 1 else "s", "; %d withheld as data" % fr.withheld if fr.withheld else "", privacy.shorten(fr.text, agent.out_chars)))
         r = getattr(res, "result", None)
         if r is not None:
-            parts.append("The result of the last line (shown to the student): " + (context.describe_value("result", r, strict=self.cfg.strict) or type(r).__name__).replace("result: ", "", 1))
+            parts.append("The result of the last line (shown to the user): " + (context.describe_value("result", r, strict=self.cfg.strict, share_data=share) or type(r).__name__).replace("result: ", "", 1))
         if shown:
-            parts.append("Displayed to the student: %s (you are not sent what it shows)." % ", ".join(shown))
+            parts.append("Displayed to the user: %s (you are not sent what it shows)." % ", ".join(shown))
         changed = [k for k, v in ns.items() if not k.startswith("_") and (k not in before or before[k] != id(v)) and k not in ("In", "Out")]
         if changed:
-            ds = [context.describe_value(k, ns[k], strict=self.cfg.strict) for k in changed[:15]]
-            parts.append("New or changed variables: " + "; ".join(privacy.clean(d, strict=self.cfg.strict)[0] for d in ds if d))
+            ds = [context.describe_value(k, ns[k], strict=self.cfg.strict, share_data=share) for k in changed[:15]]
+            parts.append("New or changed variables: " + "; ".join(privacy.clean(d, strict=self.cfg.strict, share_data=share)[0] for d in ds if d))
         msg = "\n".join(parts)
         step["sent"] = msg
         agent.ui.python_result(step, err, fr, shown)
@@ -677,8 +701,9 @@ class NotebookTools(object):
 class NotebookUI(object):
     """The agent's steps under a notebook cell; questions are asked with input()."""
 
-    def __init__(self, ip):
+    def __init__(self, ip, verbose=False):
         self.ip = ip
+        self.verbose = bool(verbose)  # -v: also what AskTim! itself has to say (what was sent, the safeguards ...)
         self.agent_mode = True
         self._held = []
         self._think = None
@@ -699,7 +724,12 @@ class NotebookUI(object):
             return None
 
     def note(self, text):
-        print(_ansi(text, "90"))
+        if self.verbose:
+            print(_ansi(text, "90"))
+
+    def data_off_reminder(self, cfg):
+        if not self.verbose:
+            _data_off_reminder(cfg)
 
     def warn(self, text):
         print(_ansi(text, "33"))
@@ -735,18 +765,25 @@ class NotebookUI(object):
             _md(safe_markdown(text))
 
     def start(self, info):
+        if not self.verbose:
+            return
         _html("<div style='font-family:sans-serif;border-left:4px solid #3a7bd5;padding:4px 10px;margin:6px 0'>"
               "<b>AskTim! Agent</b> · run %d · %s<br><b>Task:</b> %s<br><span style='color:#666;font-size:12px'>Folder: %s · %s · %s; internet %s; at most %d steps. "
-              "The AI never sees your data: output reaches it with data lines withheld. "
+              "%s "
               "Python steps run in this notebook with your own permissions (no sandbox).</span></div>" % (
                   info["number"], html.escape({"approve": "approve each step", "plan": "plan first", "auto": "autonomous", "script": "write a script"}[info["mode"]]),
                   html.escape(info["task"]), html.escape(info["folder"]), html.escape(info["model"]), html.escape(info["sandbox"]),
-                  "allowed for downloads" if info["network"] else "off", info["max_steps"]))
+                  "allowed for downloads" if info["network"] else "off", info["max_steps"],
+                  "The data filter is off (AskTim! privacy on turns it on): output reaches the AI." if info.get("share_data")
+                  else "The AI never sees your data: output reaches it with data lines withheld."))
 
     def show_step(self, step, kind, show, verdict, asking=False):
         what = {"command": "run a command", "file": "write a file", "open": "open a file", "python": "run Python code"}.get(kind, kind)
         lang = {"command": "bash", "python": "python"}.get(kind, "")
-        body = "**Step %d · %s**%s\n\n" % (step["n"], what, (" – " + inline_markdown(step["why"])) if step.get("why") else "")
+        if self.verbose or asking:
+            body = "**Step %d · %s**%s\n\n" % (step["n"], what, (" – " + inline_markdown(step["why"])) if step.get("why") else "")
+        else:
+            body = "**Step %d**\n\n" % step["n"]
         if kind == "file":
             body += "%s\n\n" % inline_code(step.get("path"))
             body += _fence(show if show.count("\n") < 60 else "\n".join(show.splitlines()[:60]) + "\n… (%d more lines)" % (show.count("\n") - 59), "")
@@ -791,12 +828,20 @@ class NotebookUI(object):
 
     def result(self, step, res, fr):
         ok = res.exit_code == 0
+        if not self.verbose:
+            if not ok or res.timed_out:
+                print(_ansi("✗ exit %s%s" % (res.exit_code, " · stopped after the time limit" if res.timed_out else ""), "31"))
+            return
         bits = ["%.1f s" % res.duration]
         if fr.withheld:
             bits.append("the AI was shown %d of %d lines; %d withheld as data" % (fr.kept, fr.total, fr.withheld))
         print(_ansi(("✓ exit 0" if ok else "✗ exit %s" % res.exit_code), "32" if ok else "31") + _ansi(" · " + " · ".join(bits), "90"))
 
     def python_result(self, step, err, fr, shown):
+        if not self.verbose:
+            if err is not None:
+                print(_ansi("✗ error", "31"))
+            return
         bits = ["%.1f s" % step.get("seconds", 0)]
         if fr.withheld:
             bits.append("%d printed line%s withheld from the AI as data" % (fr.withheld, "" if fr.withheld == 1 else "s"))
@@ -805,6 +850,8 @@ class NotebookUI(object):
         print(_ansi("✓ ran" if err is None else "✗ error", "32" if err is None else "31") + _ansi(" · " + " · ".join(bits), "90"))
 
     def inspected(self, step, desc):
+        if not self.verbose:
+            return
         _md("**Step %d · look at a file** – AskTim! described %s to the AI (its structure, not its contents):\n\n%s" % (step["n"], inline_code(step.get("path")), _fence(desc, "text")))
 
     def cell_added(self, step, kind, src):
@@ -879,13 +926,14 @@ class NotebookUI(object):
             return False, str(e)
 
     def report(self, text, outcome):
-        _md("**The agent's report**%s\n\n%s\n\n<small>The report is the model's own words: check it against the steps above.</small>" % ("" if outcome == "done" else " (%s)" % outcome, safe_markdown(text or "(no report)")))
+        note = "\n\n<small>The report is the model's own words: check it against the steps above.</small>" if self.verbose else ""
+        _md("**The agent's report**%s\n\n%s%s" % ("" if outcome == "done" else " (%s)" % outcome, safe_markdown(text or "(no report)"), note))
 
     def finish(self, written, rec):
         self.note("AskTim! wrote the record of this run: %s" % ", ".join(written))
 
 
-def nb_agent(task, mode="approve", here=False, web=None, steps=None, timeout=None, model=None):
+def nb_agent(task, mode="approve", here=False, web=None, steps=None, timeout=None, model=None, verbose=None):
     from .agent import Agent
 
     ip = _STATE["ip"]
@@ -894,8 +942,8 @@ def nb_agent(task, mode="approve", here=False, web=None, steps=None, timeout=Non
 
         ip = get_ipython()
         load(ip)
-    cfg = _config.Config()
-    ui = NotebookUI(ip)
+    cfg = _config.Config({"verbose": True} if verbose else None)
+    ui = NotebookUI(ip, verbose=cfg.verbose)
     if mode in ("approve", "plan") and not ui.interactive:
         _md("The agent needs you to approve its steps, and this notebook cannot ask (it is not being run by a person). Use `AskTim! Agent --auto ...` to let it work alone.")
         return None
@@ -950,7 +998,8 @@ def _magic(line, cell=None):
         argv = (line or "").split()
     a = cli.parse(argv)
     first = a.pos[0].lower() if a.pos else ""
-    cfg = _config.Config()
+    verbose = bool(a.opts.get("--verbose"))
+    cfg = _config.Config({"verbose": True} if verbose else None)
     from .ui import TerminalUI
 
     ui = TerminalUI(cfg)
@@ -974,7 +1023,8 @@ def _magic(line, cell=None):
             print("Give the agent a task:  AskTim! Agent \"what it should do\"")
             return None
         mode = "plan" if a.opts.get("--plan") else "script" if a.opts.get("--script") else "auto" if a.opts.get("--auto") else "approve"
-        nb_agent(task, mode=mode, here=bool(a.opts.get("--here")), web=True if a.opts.get("--web") else None, steps=a.opts.get("--steps"), timeout=a.opts.get("--timeout"), model=a.opts.get("--model"))
+        nb_agent(task, mode=mode, here=bool(a.opts.get("--here")), web=True if a.opts.get("--web") else None, steps=a.opts.get("--steps"), timeout=a.opts.get("--timeout"),
+                 model=a.opts.get("--model"), verbose=verbose)
         return None
     if first == "insert" and len(a.pos) == 2 and a.pos[1].isdigit():
         _insert_block(int(a.pos[1]))
@@ -1001,18 +1051,18 @@ def _magic(line, cell=None):
         print("The conversation is forgotten; the next question starts afresh.")
         return None
     if first in ("why", "explain") and len(a.pos) == 1:
-        return nb_ask("Why did my last cell fail, and how do I fix it?")
+        return nb_ask("Why did my last cell fail, and how do I fix it?", verbose=verbose)
     if first == "show" and len(a.pos) >= 2:
         g = notebook_context(cfg, attached=cell)
         inv = inventory.gather()
         _md("**What AskTim! would send (nothing has been sent):**\n\n" + _fence(prompts.chat_system(inventory.describe(inv, notebook_packages=_packages()), cfg, notebook=True), "text") + "\n\n" + _fence(g.text() + "Question: " + " ".join(a.pos[1:]), "text") + "\n\n" + safe_markdown(g.summary()))
         return None
-    if (len(a.pos) == 1 and first in cli.SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log")) or a.opts.get("--help"):
+    if (len(a.pos) == 1 and first in cli.SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "privacy")) or a.opts.get("--help"):
         if a.opts.get("--help") or first == "help":
             print(cli.HELP)
             return None
         cli.command(cfg, ui, first, a)
         return None
     question = " ".join(a.pos).strip()
-    nb_ask(question, attached=cell, new=bool(a.opts.get("--new")), model=a.opts.get("--model"), files=[f for f in a.files if f])
+    nb_ask(question, attached=cell, new=bool(a.opts.get("--new")), model=a.opts.get("--model"), files=[f for f in a.files if f], verbose=verbose)
     return None

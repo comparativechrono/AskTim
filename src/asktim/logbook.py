@@ -1,4 +1,4 @@
-"""A record, on the student's own computer, of how they used AI.
+"""A record, on the user's own computer, of how they used AI.
 
 Each question and each agent run adds a line to ~/.local/state/asktim/log.jsonl: when, which
 mode, which model, the question or task, what was sent with it (as a summary), and for agent
@@ -31,6 +31,8 @@ def add(entry, cfg=None):
         return
     entry = dict(entry)
     entry.setdefault("time", time.strftime("%Y-%m-%dT%H:%M:%S"))
+    if cfg is not None:
+        entry.setdefault("privacy", cfg.get("privacy"))  # "off": data could be sent with it
     try:
         paths.ensure(paths.state_dir(), private=True)
         with open(_log_file(), "a", encoding="utf-8") as f:
@@ -68,15 +70,25 @@ def statement(since=None, folder=None):
     chats = [e for e in es if e.get("mode") == "chat"]
     runs = [e for e in es if e.get("mode", "").startswith("agent")]
     first, last = es[0]["time"][:10], es[-1]["time"][:10]
+    off = [e for e in es if e.get("privacy") == "off"]
+    shared = ("my data could be sent to the AI as well: the start of files I asked about, text I pasted or piped in, the "
+              "output of the commands the agent ran and, in notebooks, my code and a preview of my variables (secrets and "
+              "personal details were removed)")
+    if off and len(off) == len(es):
+        sent = "AskTim!'s data filter was off (AskTim! privacy off) throughout, so " + shared + "."
+    else:
+        sent = ("AskTim! did not send the contents of my data files to the AI: it sent my questions, the names of the programs installed "
+                "on the computer, my recent commands (with secrets removed), descriptions of files (format, size, columns) and, in "
+                "notebooks, the code of the cells I ran. In agent mode, the output of the commands it ran was sent with lines that "
+                "looked like data withheld.")
+        if off:
+            sent += " For %d of the %d questions and tasks, though, its data filter was off (AskTim! privacy off), so %s." % (len(off), len(es), shared)
     lines = [
         "## Statement on the use of AI",
         "",
         "Between %s and %s I used AskTim!, an AI assistant for bioinformatics (model%s: %s), in this work." % (first, last, "s" if len(models) != 1 else "", ", ".join(models) or "unknown"),
         "",
-        "AskTim! did not send the contents of my data files to the AI: it sent my questions, the names of the programs installed "
-        "on the computer, my recent commands (with secrets removed), descriptions of files (format, size, columns) and, in "
-        "notebooks, the code of the cells I ran. In agent mode, the output of the commands it ran was sent with lines that "
-        "looked like data withheld.",
+        sent,
         "",
     ]
     if chats:

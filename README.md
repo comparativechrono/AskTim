@@ -17,11 +17,11 @@ errors, and has an agent that can run the steps of an analysis for you, at the c
 Jupyter or Colab notebooks. You use your own API key for Claude, Gemini or an OpenAI-compatible
 service.
 
-AskTim! was made by Tim Hearn (University of Cambridge) for teaching students to use AI responsibly.
-It works like the AI panels in his practicals (bioinformatics-workbench, R-workbench,
+AskTim! was made by Tim Hearn (University of Cambridge) to help people use AI responsibly, first in
+his teaching. It works like the AI panels in his practicals (bioinformatics-workbench, R-workbench,
 ai-agents-practical, yeast-data-ai, r-training). The AI is told what is installed and what you did.
-It gets the shape of your files, but never their contents. The aim is that students never need to
-paste data into a chatbot to get help.
+It gets the shape of your files, but never their contents (unless you turn that off). The aim is
+that nobody needs to paste data into a chatbot to get help.
 
 ```console
 $ AskTim! "how do I count the reads in a BAM file that mapped?"
@@ -90,6 +90,10 @@ To see exactly what would be sent, without sending anything:
 AskTim! show "how do I index this BAM file?"
 ```
 
+By default AskTim! prints only the answer. Add `-v` (or `--verbose`) to see what was sent with
+your question, which model answered, and AskTim!'s other notes. To make that the default, put
+`"verbose": true` in your settings or set `ASKTIM_VERBOSE=1`.
+
 ## The agent
 
 ```bash
@@ -110,6 +114,10 @@ Run it? [Enter/y] yes · [n]o · [e]dit · [a]ll (stop asking) · [q]uit:
 If you say no, it asks why and tells the agent. With `e` you can change the command first. A step
 that breaks a rule is refused before you are asked, and the agent is told why.
 
+By default you see the agent's commands, what they print, any step that fails, and its report.
+`-v` adds the rest: the safeguards in force, a heading for each step, what the AI was shown of each
+output, and where the record of the run is (the example above is with `-v`).
+
 | Option | |
 |---|---|
 | *(none)* | approve each step (the default) |
@@ -119,6 +127,7 @@ that breaks a rule is refused before you are asked, and the agent is told why.
 | `--web` | lets it download things (curl, wget); nothing may be uploaded |
 | `--here` | works in this folder, not in a new run folder (asks before it changes any file already there) |
 | `--steps N`, `--timeout S` | at most N steps (default 25); at most S seconds per command (default 600) |
+| `-v` | shows everything AskTim! has to say, not only the steps and the report |
 
 Each run gets its own folder, `asktim-runs/1-approve/`, `asktim-runs/2-auto/` and so on. The agent
 can read your files, but it can only write in that folder. When it finishes, AskTim! writes (not
@@ -179,7 +188,7 @@ names, types and shapes, never their values), and add Markdown and code cells.
 Colab doesn't let the kernel add cells, and VS Code doesn't seem to either, so they show Copy
 buttons instead.
 
-[`examples/AskTim-demo.ipynb`](https://github.com/comparativechrono/AskTim/blob/main/examples/AskTim-demo.ipynb) is a short walk-through for students that runs in Colab
+[`examples/AskTim-demo.ipynb`](https://github.com/comparativechrono/AskTim/blob/main/examples/AskTim-demo.ipynb) is a short walk-through that runs in Colab
 ([open it in Colab](https://colab.research.google.com/github/comparativechrono/AskTim/blob/main/examples/AskTim-demo.ipynb)).
 
 **Keys in Colab.** Store the key in Colab's Secrets (the key icon on the left) as
@@ -218,11 +227,19 @@ or numbers, long sequences, and encoded blobs. Error messages, warnings, help te
 counts, summaries (such as `samtools flagstat`, `seqkit stats`, `bcftools stats`, an aligner's
 summary or a line of named numbers like `{"total_reads": 100, "q30_rate": 0.88}`) and file listings
 get through, because those are what the AI needs to help. Withheld lines are replaced by a note such as
-`[AskTim!: 1204 lines withheld – they look like data (SAM/BAM alignments); the student can see them]`.
+`[AskTim!: 1204 lines withheld – they look like data (SAM/BAM alignments); the user can see them]`.
 You always see the full output yourself.
 
-`--strict`, or `"privacy": "strict"` in the settings, withholds more: column names, file listings,
-summaries and quoted values in error messages.
+`AskTim! privacy strict` (or `--strict` for one question) withholds more: column names, file
+listings, summaries and quoted values in error messages.
+
+**Turning the data filter off.** If your data aren't sensitive and you want the AI to see them,
+`AskTim! privacy off` turns the filter off. It stays off until you run `AskTim! privacy on`. While it
+is off, these can be sent: the start of a file you ask about (`--file`), text you pipe in or paste
+into a question, what the agent's commands print, and, in a notebook, your code and a preview of
+your variables. Secrets and personal details are still removed, and the AI is told the filter is
+off. AskTim! reminds you once a day while it is off, and `AskTim! status` shows it. A course can
+keep the filter on with `"locked": ["privacy"]` in its settings (see below).
 
 **Limits.** The filter is made for bioinformatics data and works well on it. It recognises data by
 its shape, so it can't promise to catch every piece of free text. A person's name quoted in an
@@ -313,7 +330,7 @@ for every folder, not just this one. Read it and edit it; it is a draft, and the
 A settings file for a lab or a JupyterHub image, at `/etc/asktim/config.json` (on Windows
 `%PROGRAMDATA%\asktim\config.json`, or wherever `ASKTIM_SITE_CONFIG` points), sets the defaults for
 everyone. Keys listed under `"locked"` cannot be
-changed by students:
+changed by the people using it (so `"privacy"` there keeps `AskTim! privacy off` from working):
 
 ```json
 {
@@ -328,9 +345,11 @@ changed by students:
 ```
 
 `course` is added to what the AI is told, so you can describe the practical, the data and any house
-rules. Settings are applied in this order: defaults, the site file, the student's
+rules. Settings are applied in this order: defaults, the site file, each user's
 `~/.config/asktim/config.json`, environment variables (`ASKTIM_PROVIDER`, `ASKTIM_MODEL`,
-`ASKTIM_PRIVACY`, `ASKTIM_COURSE`, `ASKTIM_OPENAI_URL`, ...), then command-line options. Locked
+`ASKTIM_PRIVACY`, `ASKTIM_COURSE`, `ASKTIM_VERBOSE`, `ASKTIM_OPENAI_URL`, ...), then command-line
+options. Setting `"verbose": true` makes AskTim! show by default what it sends with each question,
+which can be useful in a class on using AI. Locked
 values win over everything after the site file. With `"sandbox": "on"`, the agent refuses to run
 without a sandbox.
 
@@ -357,16 +376,18 @@ Things to think about before a class:
 | `AskTim! Claude` / `Gemini` / `OpenAI` | store a key (and use that service) |
 | `AskTim! use claude\|gemini\|openai` | switch service |
 | `AskTim! model NAME` | change the model for the current service |
-| `AskTim! status` | key, model, privacy, shell integration and sandbox |
+| `AskTim! status` | key, model, data filter, shell integration and sandbox |
 | `AskTim! tools` | what AskTim! found installed |
 | `AskTim! privacy` | what is and isn't sent |
+| `AskTim! privacy off` / `on` / `strict` | let data go to the AI, keep them here (the default), or withhold more; it stays until changed |
 | `AskTim! setup-shell` | shell integration (`--remove` to undo) |
 | `AskTim! log` / `statement` | your log; a draft AI-use statement |
 | `AskTim! new` / `forget` | forget the conversation; delete stored keys |
 | `AskTim! insert N`, `AskTim! cells` | notebooks: code block N into a cell; the agent's waiting cells |
 
-Options for questions: `--no-history`, `--history N`, `--no-files`, `--file PATH`, `--new`,
-`--model NAME`, `--strict`, `--offline` (the built-in help only, without any AI).
+Options for questions: `-v` (show what was sent, and AskTim!'s notes), `--no-history`, `--history N`,
+`--no-files`, `--file PATH`, `--new`, `--model NAME`, `--strict`, `--offline` (the built-in help
+only, without any AI).
 
 ## Files AskTim! keeps
 

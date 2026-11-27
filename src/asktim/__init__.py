@@ -1,4 +1,4 @@
-"""AskTim! - an AI helper for bioinformatics students.
+"""AskTim! - an AI helper for bioinformatics that keeps data out of the AI (unless told otherwise).
 
 At the command line::
 

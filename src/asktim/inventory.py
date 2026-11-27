@@ -235,7 +235,7 @@ def _scan_tools(timeout=6.0):
 
 
 def _python_packages(python=None):
-    """Packages of the Python that the student uses (the first python3 on PATH, or this one)."""
+    """Packages of the Python that the user uses (the first python3 on PATH, or this one)."""
     code = (
         "import json,sys\n"
         "try:\n import importlib.metadata as m\nexcept ImportError:\n import importlib_metadata as m\n"

@@ -68,7 +68,7 @@ def commands_log():
 
 
 def pretty(path):
-    """A path as the student would write it: ~ for the home folder."""
+    """A path as the user would write it: ~ for the home folder."""
     try:
         path = os.path.abspath(path)
         home = _home()
