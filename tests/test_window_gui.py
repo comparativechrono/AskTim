@@ -5,6 +5,7 @@ installed, and are skipped if not.
 """
 
 import ctypes.util
+import faulthandler
 import gc
 import json
 import os
@@ -61,10 +62,20 @@ class Driver(object):
     def __init__(self, app):
         self.app = app
 
+    def events(self):
+        """Handle the events that are waiting - and never wait for one. (Tk's update can wait on macOS,
+        for something from the window server that does not come.)"""
+        tk_ = self.app.root.tk
+        flags = tkinter._tkinter.ALL_EVENTS | tkinter._tkinter.DONT_WAIT
+        for _ in range(5000):
+            if not tk_.dooneevent(flags):
+                break
+        self.app.root.update_idletasks()
+
     def pump(self, seconds=1.0, until=None):
         t0 = time.time()
         while time.time() - t0 < seconds:
-            self.app.root.update()
+            self.events()
             if until is not None and until():
                 return True
             time.sleep(0.02)
@@ -124,6 +135,8 @@ def gui(display, tmp_path, monkeypatch, mock, project):
 
     # Tk's objects must be freed in Tk's thread: no collection of garbage in the window's other threads
     gc.disable()
+    # (a test of the window that hangs ends the run, with where it was, rather than holding it up for good)
+    faulthandler.dump_traceback_later(300, exit=True)
     try:
         app = App(folder=str(project), root=root)
         d = Driver(app)
@@ -133,6 +146,7 @@ def gui(display, tmp_path, monkeypatch, mock, project):
         app.wait_workers(15)
         del d, app, root
     finally:
+        faulthandler.cancel_dump_traceback_later()
         gc.enable()
         gc.collect()
 
@@ -338,7 +352,7 @@ def test_settings_privacy_and_output(gui, monkeypatch):
     r = run_asktim(["status"], dict(os.environ), os.getcwd())
     assert "Data filter: strict" in r.stdout and "Output: everything" in r.stdout
     s.send_history.set(False)
-    s.top.nametowidget(str(s.tabs["privacy"])).update()
+    gui.events()
     s._save("send_history", False, "recent commands off")
     assert _config.Config().get("send_history") is False
 
