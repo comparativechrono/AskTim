@@ -9,7 +9,7 @@ returned too: Snakemake runs it whenever it reads the Snakefile, even for a dry 
 
 The reader is deliberately simple: it follows the layout of rules and directives line by line and
 reads directive values with Python's own parser. What it cannot read is reported as unknown, so
-that the checks can ask the student rather than guess.
+that the checks can ask the user rather than guess.
 """
 
 import ast

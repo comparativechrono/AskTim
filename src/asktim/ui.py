@@ -1,4 +1,10 @@
-"""The command-line face of AskTim!: chat answers and the agent's steps."""
+"""The command-line face of AskTim!: chat answers and the agent's steps.
+
+By default AskTim! prints little besides the AI's answer: for the agent, its commands (and why,
+when it asks), what they print, failures and its report. With -v (or "verbose": true in the
+settings) it also prints what was sent, the safeguards, what the AI was shown of each output and
+where the record of a run is.
+"""
 
 import os
 import shutil
@@ -8,6 +14,30 @@ import time
 
 from . import paths
 from .render import Term, visible
+
+DATA_OFF_REMINDER = "AskTim!'s data filter is off, so your data can be sent to the AI. `AskTim! privacy on` turns it back on."
+
+
+def data_off_reminder_due(cfg):
+    """True (once a day) when the data filter is off: the reminder is due, and is now counted as given."""
+    if not cfg.share_data:
+        return False
+    stamp = os.path.join(paths.state_dir(), "data-filter-off-reminded")
+    today = time.strftime("%Y-%m-%d")
+    try:
+        with open(stamp) as f:
+            if f.read().strip() == today:
+                return False
+    except OSError:
+        pass
+    try:
+        paths.ensure(paths.state_dir(), private=True)
+        with open(stamp, "w") as f:
+            f.write(today)
+    except OSError:
+        pass
+    return True
+
 
 MODE_LABEL = {"approve": "approve each step", "plan": "plan first", "auto": "autonomous", "script": "write a script"}
 
@@ -20,8 +50,9 @@ class Decision(object):
 
 
 class TerminalUI(object):
-    def __init__(self, cfg=None, term=None, show_ai_view=True):
+    def __init__(self, cfg=None, term=None, show_ai_view=True, verbose=None):
         self.t = term or Term((cfg.get("color") if cfg else "auto") or "auto")
+        self.verbose = bool(cfg.verbose if (verbose is None and cfg is not None) else verbose)
         self.md = None
         self.show_ai_view = show_ai_view
         self._streamed = False
@@ -36,7 +67,9 @@ class TerminalUI(object):
     # -- general --------------------------------------------------------------------------------
 
     def note(self, text):
-        self.t.note(text)
+        """AskTim!'s own remarks: printed only with -v."""
+        if self.verbose:
+            self.t.note(text)
 
     def warn(self, text):
         self.t.warn(text)
@@ -45,9 +78,17 @@ class TerminalUI(object):
         self.t.error(text)
 
     def status(self, text):
+        if not self.verbose:
+            return
         if self.md is not None and self._streamed:
             self.t.write("\n")
         self.t.note("… " + text)
+
+    def data_off_reminder(self, cfg):
+        """With the data filter off, say so: with -v the summary of what was sent says it every time;
+        otherwise once a day, so that it is not forgotten."""
+        if not self.verbose and data_off_reminder_due(cfg):
+            self.t.warn(DATA_OFF_REMINDER)
 
     # -- streaming text of the model ------------------------------------------------------------
 
@@ -97,36 +138,50 @@ class TerminalUI(object):
     def start(self, info):
         self.agent_mode = True
         t = self.t
+        if not self.verbose:
+            return
         t.line()
         t.rule("AskTim! Agent · run %d · %s" % (info["number"], MODE_LABEL.get(info["mode"], info["mode"])), "cyan")
         t.line(t.s("Task: ", "bold") + info["task"])
         t.note("Folder: %s   ·   %s" % (info["folder"], info["model"]))
         t.note("Safeguards: %s; internet %s; at most %d steps." % (info["sandbox"], "allowed for downloads" if info["network"] else "off", info["max_steps"]))
-        t.note("The AI never sees your data: what your commands print reaches it with data lines withheld. Ctrl+C stops at any time.")
+        if info.get("share_data"):
+            t.note("The data filter is off (AskTim! privacy on turns it on): what your commands print reaches the AI. Ctrl+C stops at any time.")
+        else:
+            t.note("The AI never sees your data: what your commands print reaches it with data lines withheld. Ctrl+C stops at any time.")
         t.line()
 
-    def _step_header(self, step, kind):
+    def _step_header(self, step, kind, asking=False):
         what = {"command": "run a command", "file": "write a file", "open": "open a file", "python": "run Python code", "cell": "add a cell"}.get(kind, kind)
-        self.t.rule("Step %d · %s" % (step["n"], what), "blue")
-        if step.get("why"):
+        if self.verbose:
+            self.t.rule("Step %d · %s" % (step["n"], what), "blue")
+        if step.get("why") and (self.verbose or asking):
             self.t.line(self.t.s("Why: ", "bold") + visible(step["why"]))
 
     def show_step(self, step, kind, show, verdict, asking=False):
-        self._step_header(step, kind)
+        self._step_header(step, kind, asking)
         show = visible(show or "")
+        # quiet, and not asked to approve it: the step in a few lines (RUN.md has all of it)
+        brief = not (self.verbose or asking)
         if kind == "command":
-            for i, ln in enumerate(show.splitlines() or [""]):
+            lines = show.splitlines() or [""]
+            for i, ln in enumerate(lines[:3] if brief else lines):
                 self.t.line(self.t.s(("$ " if i == 0 else "  ") + ln, "green"))
+            if brief and len(lines) > 3:
+                self.t.line(self.t.s("  … (%d more lines)" % (len(lines) - 3), "gray"))
         elif kind == "file":
             lines = show.splitlines()
             self.t.line(self.t.s("File: %s (%d lines)" % (visible(str(step.get("path"))), len(lines)), "bold"))
-            for ln in lines[:40]:
+            for ln in [] if brief else lines[:40]:
                 self.t.line(self.t.s("  " + ln, "green"))
-            if len(lines) > 40:
-                self.t.note("  … %d more lines (press v to see them all)" % (len(lines) - 40))
+            if len(lines) > 40 and not brief:
+                self.t.line(self.t.s("  … %d more lines (press v to see them all)" % (len(lines) - 40), "gray"))
         elif kind == "python":
-            for ln in show.splitlines():
+            lines = show.splitlines()
+            for ln in lines[:3] if brief else lines:
                 self.t.line(self.t.s("  " + ln, "green"))
+            if brief and len(lines) > 3:
+                self.t.line(self.t.s("  … (%d more lines)" % (len(lines) - 3), "gray"))
         elif kind == "open":
             self.t.line("Open %s" % show)
         if verdict is not None and verdict.level == "confirm":
@@ -192,16 +247,17 @@ class TerminalUI(object):
     def blocked(self, step, verdict):
         self._step_header(step, "command" if step["tool"] == "run_command" else "file")
         if step.get("command"):
-            for i, ln in enumerate(visible(step["command"]).splitlines()):
+            lines = visible(step["command"]).splitlines()
+            for i, ln in enumerate(lines if self.verbose else lines[:3]):
                 self.t.line(self.t.s(("$ " if i == 0 else "  ") + ln, "gray"))
         self.t.error("Not allowed – " + visible("; ".join(verdict.reasons)))
-        self.t.note("The agent is told why, and has to find another way.")
+        self.note("The agent is told why, and has to find another way.")
 
     def running(self, step):
         self._last_was_output = False
 
     def output(self, stream, text):
-        # what the command prints goes straight to the student's terminal
+        # what the command prints goes straight to the user's terminal
         if stream == "stderr":
             self.t.write(self.t.s(text, "yellow") if self.t.color else text)
         else:
@@ -210,6 +266,12 @@ class TerminalUI(object):
 
     def result(self, step, res, fr):
         t = self.t
+        if not self.verbose:
+            # quiet: only what went wrong
+            if res.exit_code != 0 or res.timed_out:
+                st = ("✗ exit %s" if t.uni else "failed: exit %s") % res.exit_code
+                t.line(t.s(st + (" · stopped after the time limit" if res.timed_out else ""), "red"))
+            return
         if res.exit_code == 0:
             st = t.s("✓ exit 0" if t.uni else "ok: exit 0", "green")
         else:
@@ -224,6 +286,8 @@ class TerminalUI(object):
         t.line("%s %s" % (st, t.s("· %.1f s%s" % (res.duration, (" · " + "; ".join(extra)) if extra else ""), "gray")))
 
     def inspected(self, step, desc):
+        if not self.verbose:
+            return
         self.t.rule("Step %d · look at a file" % step["n"], "blue")
         self.t.note("AskTim! described %s to the AI (its structure, not its contents):" % visible(str(step.get("path"))))
         self.t.line("  " + desc)
@@ -272,7 +336,7 @@ class TerminalUI(object):
                 return False, str(e)
         else:
             if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-                return False, "this computer has no screen to show it on (no DISPLAY); the student can open %s themselves" % paths.pretty(path)
+                return False, "this computer has no screen to show it on (no DISPLAY); %s can be opened on another computer" % paths.pretty(path)
             if not shutil.which("xdg-open"):
                 return False, "xdg-open is not installed"
             cmd = ["xdg-open", path]
@@ -293,6 +357,8 @@ class TerminalUI(object):
     def finish(self, written, rec):
         t = self.t
         t.rule("", "cyan")
+        if not self.verbose:
+            return
         t.note("AskTim! wrote the record of this run: %s" % ", ".join(written))
         rerun = any(os.path.basename(w) == "rerun.sh" for w in written)
         t.note("Read RUN.md to check what happened%s. The report above is the model's own words: check it."
@@ -301,5 +367,7 @@ class TerminalUI(object):
     # -- chat -----------------------------------------------------------------------------------
 
     def chat_header(self, summary, model):
+        if not self.verbose:
+            return
         self.t.note(summary)
         self.t.note("(%s · AskTim! show \"…\" prints everything that would be sent)" % model)

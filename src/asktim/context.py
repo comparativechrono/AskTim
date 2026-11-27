@@ -1,9 +1,9 @@
-"""What goes with a question: the context AskTim! gathers, and a list of it for the student.
+"""What goes with a question: the context AskTim! gathers, and a list of it for the user.
 
 Every piece passes through privacy.clean() (secrets, personal details, the user's name) and
-anything that came out of a program passes through privacy.filter_output() (data lines).
-The student is always told what was sent; `AskTim! show "question"` prints all of it
-without sending anything.
+anything that came out of a program passes through privacy.filter_output() (data lines) -
+unless the user has turned the data filter off (AskTim! privacy off), when data go too.
+`AskTim! show "question"` prints all of it without sending anything; -v lists it with each answer.
 """
 
 import os
@@ -25,9 +25,10 @@ EXIT_MEANING = {
 
 
 class Gathered(object):
-    def __init__(self):
+    def __init__(self, share_data=False):
+        self.share_data = share_data  # the user has turned the data filter off
         self.parts = []  # text for the AI
-        self.sent = []  # what the student is told was sent
+        self.sent = []  # what the user is told was sent
         self.redactions = 0
         self.withheld = 0
         self.withheld_described = 0  # of those, the lines a part of the summary already counts (the piped text)
@@ -41,7 +42,11 @@ class Gathered(object):
     def text(self):
         if not self.parts:
             return ""
-        return "[Context that AskTim! gathered on the student's computer. It holds no file contents and no data.]\n" + "\n\n".join(self.parts) + "\n\n"
+        if self.share_data:
+            head = "[Context that AskTim! gathered on the user's computer. The user has turned AskTim!'s data filter off, so it can hold their data.]\n"
+        else:
+            head = "[Context that AskTim! gathered on the user's computer. It holds no file contents and no data.]\n"
+        return head + "\n\n".join(self.parts) + "\n\n"
 
     def summary(self):
         s = ", ".join(self.sent) if self.sent else "only your question"
@@ -51,11 +56,12 @@ class Gathered(object):
         rest = self.withheld - self.withheld_described
         if rest > 0:
             extra.append("%d piece%s of data withheld" % (rest, "" if rest == 1 else "s"))
-        return "Sent with your question: %s%s. No file contents." % (s, (" (" + "; ".join(extra) + ")") if extra else "")
+        tail = "The data filter is off (AskTim! privacy on turns it on)." if self.share_data else "No file contents."
+        return "Sent with your question: %s%s. %s" % (s, (" (" + "; ".join(extra) + ")") if extra else "", tail)
 
 
 def _clean(g, text, strict):
-    text, n = privacy.clean(text, strict=strict)
+    text, n = privacy.clean(text, strict=strict, share_data=g.share_data)
     g.redactions += n
     return text
 
@@ -63,9 +69,9 @@ def _clean(g, text, strict):
 def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, send_files=None, cwd=None):
     """Context for a question asked at the command line."""
     strict = cfg.strict
-    g = Gathered()
+    g = Gathered(share_data=cfg.share_data)
     cwd = cwd or os.getcwd()
-    g.add("The student's current folder: %s" % _clean(g, paths.pretty(cwd), strict), None)
+    g.add("The user's current folder: %s" % _clean(g, paths.pretty(cwd), strict), None)
     if send_files if send_files is not None else cfg.get("send_file_names", True):
         listing = fileinfo.listing(cwd, strict=strict)
         g.add("Files in that folder (names and sizes only):\n" + _clean(g, listing, strict), "names of the files in this folder" if not strict else "the number of files here")
@@ -83,29 +89,78 @@ def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, 
                 st = "" if c.status is None else ("   [exit %d]" % c.status if c.status else "")
                 lines.append("  $ %s%s" % (line.replace("\n", "\n    "), st))
             known = any(c.status is not None for c in cmds)
-            g.add("The student's last %d shell commands (oldest first%s):\n%s" % (len(cmds), "; [exit N] marks a command that failed" if known else "; exit statuses are not known", "\n".join(lines)),
+            g.add("The user's last %d shell commands (oldest first%s):\n%s" % (len(cmds), "; [exit N] marks a command that failed" if known else "; exit statuses are not known", "\n".join(lines)),
                   "your last %d commands" % len(cmds))
             last = history.last_failed(cmds[-3:])
             if last is not None:
                 meaning = EXIT_MEANING.get(last.status, "")
                 g.add("The most recent failure: `%s` ended with exit status %d%s." % (_clean(g, last.line, strict), last.status, (" (" + meaning + ")") if meaning else ""), None)
         elif source is None:
-            g.add("(AskTim! could not find the student's shell history.)", None)
+            g.add("(AskTim! could not find the user's shell history.)", None)
     for f in files or ():
-        desc = fileinfo.describe(f, strict=strict)
-        g.add("A file the student asked about: " + _clean(g, desc, strict), "a description of %s (its structure, not its contents)" % os.path.basename(f))
+        g.add(*about_file(g, f, strict))
     if stdin_text:
-        fr = privacy.filter_output(stdin_text, strict=strict, places=[cwd])
+        fr = privacy.filter_output(stdin_text, strict=strict, places=[cwd], share_data=g.share_data)
         g.withheld += fr.withheld
         g.withheld_described += fr.withheld
         body = privacy.shorten(fr.text, 6000)
-        g.add("Output the student piped into AskTim! (lines that look like data are withheld):\n```text\n%s\n```" % body,
-              "the text you piped in (%s)" % fr.summary())
+        if g.share_data:
+            g.add("Output the user piped into AskTim!:\n```text\n%s\n```" % body, "the text you piped in")
+        else:
+            g.add("Output the user piped into AskTim! (lines that look like data are withheld):\n```text\n%s\n```" % body,
+                  "the text you piped in (%s)" % fr.summary())
     return g
 
 
-def describe_value(name, v, strict=False):
-    """A variable of a notebook as a line: name, type, shape, columns - never its values."""
+def about_file(g, path, strict):
+    """(text for the AI, what the user is told was sent) for a file asked about with --file: its
+    description, and - with the data filter off - the start of the file itself."""
+    desc = _clean(g, fileinfo.describe(path, strict=strict), strict)
+    name = os.path.basename(path)
+    if g.share_data:
+        start = fileinfo.start_of(path)
+        if start:
+            return ("A file the user asked about: %s\nThe start of the file:\n```text\n%s\n```" % (desc, _clean(g, start, strict)),
+                    "a description of %s and the start of it" % name)
+    return "A file the user asked about: " + desc, "a description of %s (its structure, not its contents)" % name
+
+
+def describe_value(name, v, strict=False, share_data=False):
+    """A variable of a notebook as a line: name, type, shape, columns - never its values, unless the
+    user has turned the data filter off (share_data), when a short preview follows."""
+    line = _describe_value(name, v, strict)
+    if share_data and line:
+        p = _preview(v)
+        if p:
+            line += "; it starts:\n" + p
+    return line
+
+
+def _preview(v, limit=1500):
+    """The first values of a variable, for the AI when the data filter is off."""
+    t = type(v)
+    mod = getattr(t, "__module__", "") or ""
+    try:
+        if mod.startswith(("pandas", "polars")) and hasattr(v, "head"):
+            text = str(v.head(5))
+        elif mod.startswith("numpy") and t.__name__ == "ndarray":
+            import numpy
+
+            text = numpy.array2string(v.ravel()[:20] if v.ndim > 1 else v[:20], threshold=20)
+        elif isinstance(v, (str, bytes, bytearray)):
+            text = repr(v[:300])
+        elif isinstance(v, (list, tuple, set, frozenset, dict)):
+            text = repr(v)
+        elif isinstance(v, (bool, int, float, complex)):
+            text = repr(v)
+        else:
+            return None
+    except Exception:
+        return None
+    return text if len(text) <= limit else text[:limit] + " …"
+
+
+def _describe_value(name, v, strict=False):
     t = type(v)
     mod = getattr(t, "__module__", "") or ""
     tname = t.__name__

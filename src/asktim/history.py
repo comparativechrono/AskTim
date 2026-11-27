@@ -1,4 +1,4 @@
-"""The student's recent shell commands (never their output).
+"""The user's recent shell commands (never their output).
 
 Two sources, best first:
 

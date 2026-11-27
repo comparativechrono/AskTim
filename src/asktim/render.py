@@ -115,7 +115,7 @@ class Term(object):
         return ans.strip() if ans.strip() else default
 
     def edit(self, prompt, text):
-        """Let the student change a line of text (pre-filled where readline allows)."""
+        """Let the user change a line of text (pre-filled where readline allows)."""
         if "\n" not in text:
             try:
                 import readline  # noqa: F401  (gives input() line editing)
@@ -171,7 +171,7 @@ def visible(text):
     """Control characters (escape codes, carriage returns ...) written as ^X.
 
     Text that came from the AI goes through this before it reaches the terminal, so it cannot move the
-    cursor, recolour or overwrite what is on the screen: what the student reads is what will run.
+    cursor, recolour or overwrite what is on the screen: what the user reads is what will run.
     """
     if not text:
         return text
@@ -461,7 +461,7 @@ def safe_markdown(md):
 
     Jupyter renders the HTML inside Markdown that it trusts, and output made while a notebook runs is
     trusted, so an <img onerror=...> from the model would run as script in the notebook's page - with
-    the power to run code in the kernel without the student's approval. So nothing the model writes
+    the power to run code in the kernel without the user's approval. So nothing the model writes
     reaches the page as HTML: code blocks and inline code are turned into <pre>/<code> with their text
     escaped, everything else has & and < escaped, and only http(s) and mailto links stay links. (The
     price: code in answers is not colour-highlighted in notebooks.)

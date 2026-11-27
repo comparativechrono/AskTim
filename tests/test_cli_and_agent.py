@@ -22,7 +22,7 @@ def test_chat_sends_context_but_no_data_or_secrets(project, env, mock):
         "cd practical\nexport ANTHROPIC_API_KEY=sk-ant-REALSECRET0123456789abcdef\nbwa mem data/ref.fa data/reads_R1.fastq > aln.sam\n"
         "grep %s data/reads_R1.fastq\nAskTim! Claude sk-ant-ANOTHER0123456789abcdef\n" % _reads(project)[0])
     mock.queue = [{"text": "Divide the lines by 4:\n\n```bash\necho $(( $(wc -l < data/reads_R1.fastq) / 4 ))\n```"}]
-    p = run_asktim(["how many reads are in my fastq file?"], env, project)
+    p = run_asktim(["-v", "how many reads are in my fastq file?"], env, project)
     assert p.returncode == 0, p.stdout + p.stderr
     assert "Divide the lines by 4" in p.stdout and "Sent with your question" in p.stdout
     sent = mock.all_text_sent()
@@ -77,7 +77,7 @@ def test_without_a_key_there_is_offline_help(project, env, mock):
 
 
 def test_status_privacy_tools_help(project, env):
-    for args, want in ((["status"], "Privacy: standard"), (["privacy"], "Never sent"), (["help"], "AskTim! Agent"), (["--version"], "AskTim!")):
+    for args, want in ((["status"], "Data filter: on"), (["privacy"], "Never sent"), (["help"], "AskTim! Agent"), (["--version"], "AskTim!")):
         p = run_asktim(args, env, project)
         assert p.returncode == 0 and want in p.stdout, (args, p.stdout, p.stderr)
 
@@ -217,7 +217,7 @@ def test_data_pasted_into_a_question_is_withheld(project, env, mock):
     reads = _reads(project)
     mock.queue = [{"text": "These are FASTQ records."}]
     q = "what are these lines?\n@r1\n%s\n+\n%s\n@r2\n%s\n+\n%s" % (reads[0], "F" * 76, reads[1], "F" * 76)
-    p = run_asktim([q], env, project)
+    p = run_asktim(["-v", q], env, project)
     assert p.returncode == 0 and "kept 8 pieces of data in your question" in p.stdout
     assert reads[0] not in mock.all_text_sent() and "what are these lines?" in mock.all_text_sent()
 
@@ -296,7 +296,7 @@ def test_here_mode_does_not_report_the_agents_own_files_as_the_students(project,
     p = run_asktim(["Agent", "--here", "--auto", "make and remove a scratch file"], env, project, timeout=120)
     assert p.returncode == 0, p.stdout[-3000:]
     assert "already in your folder" not in p.stdout
-    assert "already in the student's folder" not in mock.all_text_sent()
+    assert "already in the user's folder" not in mock.all_text_sent()
     assert not (project / "scratch.txt").exists()
 
 
@@ -305,7 +305,138 @@ def test_the_agent_is_told_where_files_are_with_here(project, env, mock):
     mock.queue = [{"text": "Nothing to do."}]
     assert run_asktim(["Agent", "--here", "--auto", "look at the data"], env, project).returncode == 0
     system = mock.requests[0]["body"]["system"][0]["text"]
-    assert "the student's own folder" in system and "data/reads.fq" in system and "../../data" not in system
+    assert "the user's own folder" in system and "data/reads.fq" in system and "../../data" not in system
     mock.queue = [{"text": "Nothing to do."}]
     assert run_asktim(["Agent", "--auto", "look at the data"], env, project).returncode == 0
     assert "../../data/reads.fq" in mock.requests[-1]["body"]["system"][0]["text"]
+
+
+# -- quiet by default, -v for everything -----------------------------------------------------------
+
+def test_chat_prints_only_the_answer_unless_verbose(project, env, mock):
+    mock.queue = [{"text": "Use `samtools sort`."}, {"text": "Use `samtools sort`."}, {"text": "Use `samtools sort`."}]
+    p = run_asktim(["how do I sort a BAM?"], env, project)
+    assert p.returncode == 0 and p.stdout.strip() == "Use `samtools sort`." and not p.stderr, (p.stdout, p.stderr)
+    p = run_asktim(["--verbose", "how do I sort a BAM?"], env, project)
+    assert "Sent with your question" in p.stdout and "AskTim! show" in p.stdout
+    p = run_asktim(["how do I sort a BAM?"], dict(env, ASKTIM_VERBOSE="1"), project)
+    assert "Sent with your question" in p.stdout
+
+
+def test_the_agent_shows_its_commands_output_failures_and_report(project, env, mock):
+    mock.queue = [
+        {"tools": [("run_command", {"command": "ls ../../data", "why": "See the inputs."})]},
+        {"tools": [("run_command", {"command": "false", "why": "Fail on purpose."})]},
+        {"text": "Done: the inputs are listed."},
+    ]
+    p = run_asktim(["Agent", "--auto", "list the inputs"], env, project, timeout=120)
+    assert p.returncode == 0, p.stdout[-3000:]
+    out = p.stdout
+    assert "$ ls ../../data" in out and "reads_R1.fastq" in out and "exit 1" in out and "Done: the inputs are listed." in out
+    for chatter in ("Safeguards:", "the AI was shown", "wrote the record", "Step 1 ·", "Why: See the inputs"):
+        assert chatter not in out, chatter
+    mock.queue = [
+        {"tools": [("run_command", {"command": "ls ../../data", "why": "See the inputs."})]},
+        {"text": "Done."},
+    ]
+    out = run_asktim(["Agent", "--auto", "-v", "list the inputs"], env, project, timeout=120).stdout
+    for chatter in ("Safeguards:", "the AI was shown", "wrote the record", "Step 1 ·", "Why: See the inputs"):
+        assert chatter in out, chatter
+
+
+# -- the data filter can be turned off, and stays off until it is turned on -------------------------
+
+def _settings(env):
+    p = os.path.join(env["ASKTIM_HOME"], "config", "config.json")
+    return json.load(open(p)) if os.path.exists(p) else {}
+
+
+def test_privacy_off_lasts_until_privacy_on(project, env, mock):
+    reads = _reads(project)
+    p = run_asktim(["privacy", "off"], env, project)
+    assert p.returncode == 0 and "now off" in p.stdout and "AskTim! privacy on" in p.stdout
+    assert _settings(env)["privacy"] == "off"
+    assert "Data filter: OFF" in run_asktim(["status"], env, project).stdout
+    # a file asked about, text piped in and data pasted into the question now go to the AI ...
+    mock.queue = [{"text": "They are reads."}, {"text": "Yes."}]
+    p = run_asktim(["--file", "data/reads_R1.fastq", "what is in this file? %s" % reads[1]], env, project, stdin="@x\n%s\n+\n%s\n" % (reads[2], "F" * 76))
+    assert p.returncode == 0, p.stdout + p.stderr
+    sent = mock.all_text_sent()
+    for r in reads[:3]:
+        assert r in sent
+    assert "turned AskTim!'s data filter off" in mock.requests[-1]["body"]["system"][0]["text"]
+    # ... with a reminder, once a day
+    assert "data filter is off" in p.stdout + p.stderr
+    p = run_asktim(["and now?"], env, project)
+    assert "data filter is off" not in p.stdout + p.stderr
+    # secrets and personal details are still removed
+    mock.queue = [{"text": "ok"}]
+    run_asktim(["is sk-ant-api03-SECRETSECRETSECRET0123456789 my key? mail me at jo@example.org"], env, project)
+    sent = json.dumps(mock.requests[-1]["body"])
+    assert "SECRETSECRET" not in sent and "jo@example.org" not in sent
+    # on again: nothing of the data goes
+    p = run_asktim(["privacy", "on"], env, project)
+    assert p.returncode == 0 and _settings(env)["privacy"] == "standard"
+    mock.queue = [{"text": "ok"}]
+    run_asktim(["--file", "data/reads_R1.fastq", "what is in this file?"], env, project)
+    assert reads[0] not in json.dumps(mock.requests[-1]["body"])
+    assert "You never see the contents" in mock.requests[-1]["body"]["system"][0]["text"]
+
+
+def test_a_course_can_keep_the_data_filter_on(project, env, mock, tmp_path):
+    site = tmp_path / "site.json"
+    site.write_text(json.dumps({"privacy": "standard", "locked": ["privacy"]}))
+    e = dict(env, ASKTIM_SITE_CONFIG=str(site))
+    p = run_asktim(["privacy", "off"], e, project)
+    assert p.returncode == 1 and "fix privacy" in p.stdout + p.stderr
+    # even with "off" in the user's own settings, the course's value wins
+    os.makedirs(os.path.join(e["ASKTIM_HOME"], "config"), exist_ok=True)
+    with open(os.path.join(e["ASKTIM_HOME"], "config", "config.json"), "w") as f:
+        json.dump({"privacy": "off"}, f)
+    mock.queue = [{"text": "ok"}]
+    run_asktim(["--file", "data/reads_R1.fastq", "what is in it?"], e, project)
+    assert _reads(project)[0] not in mock.all_text_sent()
+
+
+def test_the_agent_sees_output_with_the_data_filter_off(project, env, mock):
+    reads = _reads(project)
+    assert run_asktim(["privacy", "off"], env, project).returncode == 0
+    mock.queue = [
+        {"tools": [("run_command", {"command": "head -4 ../../data/reads_R1.fastq", "why": "Look at a read."})]},
+        {"text": "It is a 76 bp read."},
+    ]
+    p = run_asktim(["Agent", "--auto", "show me a read"], env, project, timeout=120)
+    assert p.returncode == 0, p.stdout[-3000:]
+    assert reads[0] in mock.all_text_sent()
+    system = mock.requests[0]["body"]["system"][0]["text"]
+    assert "turned AskTim!'s data filter off" in system and "You cannot see data" not in system
+    assert "with data lines withheld" not in json.dumps(mock.requests[0]["body"]["tools"])
+
+
+def test_nothing_the_ai_is_told_calls_the_user_a_student():
+    from asktim import config, prompts
+
+    class Cfg(config.Config):
+        def __init__(self, level):
+            config.Config.__init__(self, {"privacy": level})
+
+    for level in ("standard", "strict", "off"):
+        c = Cfg(level)
+        texts = [prompts.chat_system(["python 3"], c, notebook=nb) for nb in (False, True)]
+        for mode in ("approve", "plan", "auto", "script"):
+            for nb in (False, True):
+                for rel in ("../..", "."):
+                    texts.append(prompts.agent_system(["python 3"], c, mode, ".", rel, notebook=nb, allow_network=nb))
+        texts += [json.dumps([t.__dict__ for t in prompts.tool_specs(notebook=nb, share_data=level == "off")]) for nb in (False, True)]
+        for t in texts:
+            assert "student" not in t.lower(), t[t.lower().find("student") - 80:t.lower().find("student") + 40]
+
+
+def test_the_statement_says_when_the_data_filter_was_off(project, env, mock):
+    mock.queue = [{"text": "ok"}, {"text": "ok"}]
+    run_asktim(["first question"], env, project)
+    assert "did not send the contents" in run_asktim(["statement"], env, project).stdout
+    run_asktim(["privacy", "off"], env, project)
+    run_asktim(["second question"], env, project)
+    s = run_asktim(["statement"], env, project).stdout
+    assert "For 1 of the 2 questions and tasks" in s and "data filter was off" in s

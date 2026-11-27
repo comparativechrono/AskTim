@@ -113,7 +113,7 @@ def markdown(run):
         L.append("")
         for i, p in enumerate(run["plan_rounds"] if run.get("plan_rounds") else [run["plan"]]):
             if i:
-                L.append("*Changes asked for by the student:* %s" % (run.get("plan_feedback") or [""])[i - 1] if i - 1 < len(run.get("plan_feedback") or []) else "")
+                L.append("*Changes you asked for:* %s" % (run.get("plan_feedback") or [""])[i - 1] if i - 1 < len(run.get("plan_feedback") or []) else "")
                 L.append("")
             L.append(p.strip())
             L.append("")
@@ -145,10 +145,10 @@ def markdown(run):
         L.append("")
         bits = []
         if s.get("decision"):
-            bits.append({"run": "approved by the student", "auto": "run without asking (autonomous)", "all": "approved (and the rest of the run without asking)",
-                         "edit": "changed by the student before it ran", "refuse": "refused by the student", "blocked": "refused by AskTim!'s safeguards"}.get(s["decision"], s["decision"]))
+            bits.append({"run": "approved by you", "auto": "run without asking (autonomous)", "all": "approved (and the rest of the run without asking)",
+                         "edit": "changed by you before it ran", "refuse": "refused by you", "blocked": "refused by AskTim!'s safeguards"}.get(s["decision"], s["decision"]))
         if s.get("comment"):
-            bits.append("the student said: “%s”" % s["comment"])
+            bits.append("you said: “%s”" % s["comment"])
         if s.get("original") and s.get("decision") == "edit":
             bits.append("the agent had proposed: `%s`" % s["original"].replace("`", "'")[:300])
         if s.get("blocked"):
@@ -160,7 +160,7 @@ def markdown(run):
         if s.get("timed_out"):
             bits.append("stopped: it ran longer than the time limit")
         if s.get("interrupted"):
-            bits.append("stopped by the student (Ctrl+C)")
+            bits.append("stopped by you (Ctrl+C)")
         if s.get("lines") is not None:
             bits.append("%d line%s of output" % (s["lines"], "" if s["lines"] == 1 else "s"))
         if s.get("withheld"):

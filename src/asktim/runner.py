@@ -4,15 +4,15 @@ Each command runs in bash (sh if there is no bash), in the agent's folder, with 
 (stdin is /dev/null, so nothing can wait for typing), with a time limit, in a process group
 of its own (so that a timeout or Ctrl+C stops everything it started). Secrets are taken out
 of its environment (variables whose names hold KEY, TOKEN, SECRET, PASSWORD ...), so a
-command cannot print the student's API keys.
+command cannot print the user's API keys.
 
-The student sees everything a command prints, as it prints it. A bounded copy (the beginning
+The user sees everything a command prints, as it prints it. A bounded copy (the beginning
 and the end) is kept for the data filter, which decides what the AI may see.
 
 Sandbox: on Linux, when bubblewrap (bwrap) is installed and works, every command runs in a
 sandbox where the whole file system is read-only except the agent's folder and a private
-/tmp, and - unless the student allowed the internet - there is no network. Where there is
-no sandbox, AskTim! compares the student's folder before and after each step and reports
+/tmp, and - unless the user allowed the internet - there is no network. Where there is
+no sandbox, AskTim! compares the user's folder before and after each step and reports
 any file that changed outside the agent's folder.
 """
 
@@ -101,7 +101,7 @@ class Sandbox(object):
         self.student_dir = os.path.realpath(student_dir)
         self.allow_network = allow_network
         self.private_tmp = tempfile.mkdtemp(prefix="asktim-tmp-")
-        # a private /tmp would hide a student's folder that lies under /tmp: then the real /tmp
+        # a private /tmp would hide a user's folder that lies under /tmp: then the real /tmp
         # stays (read-only, like everything else) and commands get a private scratch folder
         tmp_root = os.path.realpath(tempfile.gettempdir())
         self.overlay_tmp = not any(

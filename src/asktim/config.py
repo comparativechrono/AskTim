@@ -24,8 +24,9 @@ import sys
 from . import paths
 
 PROVIDERS = ("claude", "gemini", "openai")
+PRIVACY_LEVELS = ("standard", "strict", "off")
 
-# what students may type for each service
+# what may be typed for each service
 PROVIDER_ALIASES = {
     "claude": "claude",
     "anthropic": "claude",
@@ -69,7 +70,10 @@ DEFAULTS = {
     "send_file_names": True,
     # "standard": data are withheld; names of files and columns, help text, errors and summaries are sent.
     # "strict": also no column names or file names, and of a command's output only errors and help text.
+    # "off": the data filter is off (AskTim! privacy off): data can be sent; secrets and personal details are still removed.
     "privacy": "standard",
+    # what AskTim! prints besides the AI's answer: false - only what is needed; true - everything (-v)
+    "verbose": False,
     "agent": {
         "max_steps": 25,
         "command_timeout": 600,
@@ -91,6 +95,7 @@ ENV_SETTINGS = {
     "ASKTIM_PRIVACY": "privacy",
     "ASKTIM_COURSE": "course",
     "ASKTIM_COLOR": "color",
+    "ASKTIM_VERBOSE": "verbose",
     "ASKTIM_OPENAI_URL": "openai_base_url",
     "ASKTIM_ANTHROPIC_URL": "anthropic_base_url",
     "ASKTIM_GEMINI_URL": "gemini_base_url",
@@ -163,13 +168,13 @@ class Config(object):
         for k, v in (overrides or {}).items():
             if v is not None:
                 _set_path(data, k, v)
-        # the instructor's locked values win over everything the student sets
+        # the instructor's locked values win over everything the user sets
         for k, v in site_values.items():
             if v is not None:
                 _set_path(data, k, v)
         data["locked"] = locked
         data["provider"] = normalise_provider(data.get("provider")) or "claude"
-        if data.get("privacy") not in ("standard", "strict"):
+        if data.get("privacy") not in PRIVACY_LEVELS:
             data["privacy"] = "standard"
         self.data = data
 
@@ -190,6 +195,16 @@ class Config(object):
     @property
     def strict(self):
         return self.data.get("privacy") == "strict"
+
+    @property
+    def share_data(self):
+        """The user has turned the data filter off (AskTim! privacy off)."""
+        return self.data.get("privacy") == "off"
+
+    @property
+    def verbose(self):
+        v = self.data.get("verbose")
+        return v is True or str(v).strip().lower() in ("1", "true", "yes", "on")
 
     def is_locked(self, key):
         return any(key == k or key.startswith(k + ".") for k in self.data.get("locked", []))
@@ -264,7 +279,7 @@ def in_colab():
 
 
 def _colab_secret(provider):
-    """A key from Colab's Secrets (the key icon in Colab's left bar). Colab asks the student first."""
+    """A key from Colab's Secrets (the key icon in Colab's left bar). Colab asks the user first."""
     if not in_colab():
         return None
     try:

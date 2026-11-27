@@ -5,7 +5,7 @@ Everything AskTim! sends to an AI service passes through this module.
 1. Secrets are removed: API keys, tokens, passwords, credentials in URLs, private keys.
 2. Personal details are removed: e-mail addresses, NHS numbers, UK phone and National
    Insurance numbers, and long DNA/RNA/protein sequences written into a command or a message.
-3. The student's user name, home folder and computer name are replaced by "user", "~", "host".
+3. The user's user name, home folder and computer name are replaced by "user", "~", "host".
 4. Output of commands and code is filtered line by line (DataFilter). Lines that look like
    data - sequences, reads, alignments, variants, intervals, table rows, columns of numbers,
    lists of IDs, encoded blobs - are withheld, and a note says how many lines were withheld
@@ -156,7 +156,9 @@ def _nhs_valid(digits):
     return check != 10 and check == int(digits[9])
 
 
-def redact_personal(text, strict=False):
+def redact_personal(text, strict=False, data=True):
+    """Personal details out of text (e-mail addresses, NHS, phone and NI numbers) and, unless the data
+    filter is off (data=False), the data that can sit in a line of text: sequences, encoded data, rows."""
     if not text:
         return text, 0
     n = 0
@@ -174,6 +176,8 @@ def redact_personal(text, strict=False):
     n += k
     text, k = _NI.subn("[NI number]", text)
     n += k
+    if not data:
+        return text, n
 
     def quoted_row(m):
         body = m.group(2)
@@ -231,7 +235,7 @@ _IDENT = None
 
 
 def mask_identity(text):
-    """The student's home folder becomes ~, their user name 'user', the computer's name 'host'."""
+    """The user's home folder becomes ~, their user name 'user', the computer's name 'host'."""
     global _IDENT
     if not text:
         return text
@@ -247,23 +251,27 @@ def mask_identity(text):
     return text
 
 
-def clean(text, strict=False):
-    """Secrets, personal details and identity out of any text that is going to the AI."""
+def clean(text, strict=False, share_data=False):
+    """Secrets, personal details and identity out of any text that is going to the AI (and sequences
+    and encoded data, unless the user has turned the data filter off: share_data)."""
     if not text:
         return text, 0
     text, a = redact_secrets(text)
-    text, b = redact_personal(text, strict=strict)
+    text, b = redact_personal(text, strict=strict and not share_data, data=not share_data)
     return mask_identity(text), a + b
 
 
-def clean_question(text, strict=False):
-    """A student's question, ready for the AI: (text, details removed, data lines withheld).
+def clean_question(text, strict=False, share_data=False):
+    """A user's question, ready for the AI: (text, details removed, data lines withheld).
 
     Text pasted into a question goes through the data filter first, while its shape is intact
     (four FASTQ lines are recognisable as a read; after redaction they are not), then through clean().
     """
     text = (text or "").strip()
     withheld = 0
+    if share_data:
+        text, n = clean(text, share_data=True)
+        return text, n, 0
     if text.count("\n") >= 2:
         fr = filter_output(text, strict=strict)
         text, withheld = fr.text, fr.withheld
@@ -274,7 +282,7 @@ def clean_question(text, strict=False):
     return text, n, withheld
 
 
-_INLINE_NOTE = "[AskTim!: %s withheld – the student can see it]"
+_INLINE_NOTE = "[AskTim!: %s withheld – the user can see it]"
 # CHROM POS ID REF ALT QUAL (FILTER INFO ...), with spaces where the tabs were
 _VCF_INLINE = re.compile(r"(?<!\S)[\w.|:\-]+[ \t]+\d+[ \t]+(?:\.|[\w.;:\-]+)[ \t]+[ACGTNacgtn]+[ \t]+(?:[ACGTNacgtn,]+|<[\w:]+>|\*|\.)"
                          r"[ \t]+(?:\d+(?:\.\d+)?|\.)(?:[ \t]+(?:PASS|\.|[A-Za-z][\w;]*[A-Z0-9][\w;]*)(?![\w']))?(?:[ \t]+\S*=\S*)?(?:[ \t]+\S+:\S+){0,2}")
@@ -810,9 +818,9 @@ def _classify(lines, strict):
     return labels
 
 
-def _redact_line(line, strict):
+def _redact_line(line, strict, data=True):
     line, _ = redact_secrets(line)
-    line, _ = redact_personal(line, strict=strict)
+    line, _ = redact_personal(line, strict=strict, data=data)
     if strict:
         line = re.sub(r"'[^']{1,200}'", "'[value]'", line)
         line = re.sub(r"\"[^\"]{1,200}\"", '"[value]"', line)
@@ -873,7 +881,7 @@ def _existing_names(lines, labels, places):
             labels[i] = None
 
 
-def filter_output(text, kind="default", strict=False, places=()):
+def filter_output(text, kind="default", strict=False, places=(), share_data=False):
     """Filter the output of a command or of code before the AI sees it.
 
     kind: "default" - classify every line; "help" (help or version text), "code" (a script
@@ -881,6 +889,8 @@ def filter_output(text, kind="default", strict=False, places=()):
     secrets and personal details - except in strict mode, where every line is classified.
     places: the folders the command ran in and looked at; a line that names a file or folder
     there is a file name, not data (not in strict mode, which withholds file names).
+    share_data: the user has turned the data filter off - every line is kept, cleaned of secrets
+    and personal details.
     """
     text = ANSI.sub("", text or "")
     # progress bars: keep what a terminal finally shows on each line
@@ -888,6 +898,9 @@ def filter_output(text, kind="default", strict=False, places=()):
     if lines and lines[-1] == "":
         lines.pop()
     total = len(lines)
+    if share_data:
+        out = [mask_identity(_redact_line(ln, False, data=False)) for ln in lines]
+        return FilterResult("\n".join(out), total, 0, Counter(), total)
     if kind in ("help", "code", "summary") and not strict:
         out = [mask_identity(_redact_line(ln, strict)) for ln in lines]
         return FilterResult("\n".join(out), total, 0, Counter(), total)
@@ -925,7 +938,7 @@ def filter_output(text, kind="default", strict=False, places=()):
         withheld += count
         kinds.update(run)
         what = ", ".join(k for k, _ in run.most_common(2)) or "data"
-        out.append("[AskTim!: %d line%s withheld – %s like data (%s); the student can see %s]" % (count, "" if count == 1 else "s", "it looks" if count == 1 else "they look", what, "it" if count == 1 else "them"))
+        out.append("[AskTim!: %d line%s withheld – %s like data (%s); the user can see %s]" % (count, "" if count == 1 else "s", "it looks" if count == 1 else "they look", what, "it" if count == 1 else "them"))
         i = j
     return FilterResult("\n".join(out), total - withheld, withheld, kinds, total)
 
@@ -935,11 +948,12 @@ _ONE_NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
 _NUM_LIST = re.compile(r"([\[(]\s*)((?:%s\s*,\s*){7,}%s)(\s*,?\s*[\])])" % (_ONE_NUMBER, _ONE_NUMBER))
 
 
-def filter_code(code, strict=False):
+def filter_code(code, strict=False, share_data=False):
     """Code from a notebook cell, with the data that can be typed into code withheld: a text block in a
     string (a CSV pasted between triple quotes) goes through the data filter, and a literal list of
-    eight or more numbers is shortened. (text, lines or lists withheld)"""
-    if not code:
+    eight or more numbers is shortened. (text, lines or lists withheld)
+    With the data filter off (share_data) the code goes as it is: it is cleaned of secrets later."""
+    if not code or share_data:
         return code, 0
     count = [0]
 

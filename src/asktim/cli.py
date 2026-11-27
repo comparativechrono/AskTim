@@ -41,11 +41,13 @@ More:
   AskTim! status              settings, key, model, safeguards
   AskTim! tools               the programs and packages AskTim! found
   AskTim! privacy             what is sent to the AI, and what never is
+  AskTim! privacy off | on    let your data go to the AI, or keep them here (the default); it stays until changed
   AskTim! model NAME          change the model          AskTim! use claude|gemini|openai
   AskTim! log                 your recent questions     AskTim! statement   a draft statement on your use of AI
   AskTim! new                 forget the conversation   AskTim! forget      delete your stored key(s)
 
-Options for questions: --no-history, --history N, --no-files, --new, --offline, --model NAME
+Options for questions: -v (also show what was sent, and AskTim!'s notes), --no-history, --history N, --no-files,
+  --new, --offline, --model NAME.  For the agent, -v also shows the safeguards, what the AI saw of each step and the record.
 Put your question in quotes. (In zsh, an unquoted ? or * is read by the shell first.)
 In a notebook: `import asktim`, then type AskTim! … in a cell. `asktim` is the same command without the "!".
 """
@@ -80,6 +82,8 @@ def parse(argv):
             a.opts["--help"] = True
         elif t in ("-V",):
             a.opts["--version"] = True
+        elif t in ("-v", "--verbose"):
+            a.opts["--verbose"] = True
         elif t in FLAGS:
             a.opts[t] = True
         elif t.split("=", 1)[0] in VALUE_OPTS:
@@ -178,6 +182,8 @@ def _cfg(a):
     if a.opts.get("--effort"):
         over["effort.chat"] = a.opts["--effort"]
         over["effort.agent"] = a.opts["--effort"]
+    if a.opts.get("--verbose"):
+        over["verbose"] = True
     return _config.Config(over)
 
 
@@ -222,7 +228,7 @@ def _main(argv):
                  history_n=a.opts.get("--history"), send_files=False if a.opts.get("--no-files") else None)
         return 0
 
-    if (len(a.pos) == 1 and first in SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "insert")):
+    if (len(a.pos) == 1 and first in SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "insert", "privacy")):
         return command(cfg, ui, first, a)
 
     question = " ".join(a.pos).strip()
@@ -245,7 +251,7 @@ def _main(argv):
         ans = chat.ask(cfg, ui, question, files=files, stdin_text=stdin, new=bool(a.opts.get("--new")), model=a.opts.get("--model"),
                        send_history=False if a.opts.get("--no-history") else None, history_n=a.opts.get("--history"),
                        send_files=False if a.opts.get("--no-files") else None)
-    except Exception as e:  # a last resort: never show a student a raw traceback for a network problem
+    except Exception as e:  # a last resort: never show anyone a raw traceback for a network problem
         if os.environ.get("ASKTIM_DEBUG"):
             raise
         ui.error("AskTim! had a problem: %s" % e)
@@ -418,6 +424,8 @@ def command(cfg, ui, name, a):
     if name == "privacy":
         from . import logbook, paths
 
+        if arg:
+            return set_privacy(cfg, ui, arg.lower())
         print(PRIVACY.format(level=cfg.get("privacy"), log=paths.pretty(logbook.log_file())))
         return 0
     if name in ("new", "reset"):
@@ -507,6 +515,36 @@ def command(cfg, ui, name, a):
     return 0
 
 
+PRIVACY_WORDS = {"on": "standard", "standard": "standard", "off": "off", "strict": "strict"}
+
+
+def set_privacy(cfg, ui, word):
+    """AskTim! privacy on | off | strict: saved in the user's settings, so it lasts until it is changed."""
+    t = ui.t
+    level = PRIVACY_WORDS.get(word)
+    if level is None:
+        ui.error("Use:  AskTim! privacy on   (data stay here; the default)   ·   AskTim! privacy off   ·   AskTim! privacy strict")
+        return 2
+    if cfg.is_locked("privacy") and level != cfg.get("privacy"):
+        ui.error("Your course's settings fix privacy at \"%s\", so it cannot be changed here." % cfg.get("privacy"))
+        return 1
+    _config.save_user_setting("privacy", level)
+    env = os.environ.get("ASKTIM_PRIVACY")
+    if env and env != level:
+        t.warn("While the environment variable ASKTIM_PRIVACY=%s is set, it decides instead." % env)
+    if level == "off":
+        t.warn("AskTim!'s data filter is now off, and it stays off until you run:  AskTim! privacy on")
+        t.line("From now on your data can be sent to the AI service: the start of a file you ask about (--file), text you pipe in "
+               "or paste into a question, what the agent's commands print, and in a notebook your code and a preview of your variables.")
+        t.line("Secrets (keys, tokens, passwords) and personal details (e-mail addresses, phone, NHS and NI numbers) are still removed.")
+        t.line("Do not use it with personal, patient or otherwise sensitive data, unless your institution has approved the AI service for them.")
+    elif level == "strict":
+        t.good("AskTim! is strict now: besides data, it also withholds file and column names, listings and summaries.")
+    else:
+        t.good("AskTim!'s data filter is on: your data stay on this computer.")
+    return 0
+
+
 def status(cfg, ui):
     from . import history, paths, runner, shell_setup
 
@@ -518,7 +556,10 @@ def status(cfg, ui):
         t.line("%s%-26s model %-22s key %s" % (mark, _config.PROVIDER_NAMES[p], cfg.model(p) or "(none)", ("%s (%s)" % (_config.mask(key), where)) if key else "not set"))
     if cfg.provider == "openai":
         t.line("  address: %s" % cfg.get("openai_base_url"))
-    t.line("Privacy: %s (AskTim! privacy explains it)" % cfg.get("privacy"))
+    filt = {"standard": "on - data stay on this computer", "strict": "strict - data, file and column names stay here",
+            "off": "OFF - data can be sent to the AI (AskTim! privacy on turns it on)"}[cfg.get("privacy")]
+    t.line("Data filter: %s%s (AskTim! privacy explains it)" % (filt, "; fixed by your course" if cfg.is_locked("privacy") else ""))
+    t.line("Output: %s" % ("everything (verbose)" if cfg.verbose else "only the answer (-v shows everything)"))
     sh = history.detect_shell()
     hooked = shell_setup.installed(sh) if sh in ("bash", "zsh", "fish") else False
     t.line("Shell: %s; AskTim!'s shell integration %s%s" % (sh, "is installed" if hooked else "is not installed (AskTim! setup-shell)",
@@ -561,8 +602,12 @@ agent reads a README or your notes, the AI sees them.
 Never sent: the contents of your data files, your keys, your shell history beyond the last
 commands, anything from ~/.ssh and other credentials.
 
-Settings: privacy is "{level}". "strict" (AskTim! --strict ..., or "privacy": "strict" in the
-settings) also withholds column names, file listings and summaries, and quoted values in errors.
+Settings: privacy is "{level}". "strict" (AskTim! privacy strict, or --strict for one question)
+also withholds column names, file listings and summaries, and quoted values in errors.
+"off" (AskTim! privacy off) turns the data filter off until you run `AskTim! privacy on`: then
+data can be sent - the start of a file you ask about, text you pipe in or paste, what the
+agent's commands print, your notebook code and a preview of your variables. Secrets and
+personal details are still removed. A course's settings can fix the level.
 
 Limits: the filter recognises data by their shape. It is made for bioinformatics data and
 works well on them, but it cannot promise to catch every piece of free text - a name quoted in

@@ -4,8 +4,8 @@ The command is read as the shell would read it (words, quotes, pipes, lists, red
 $( ), here-documents, bash -c '...', scripts that it runs), and each simple command is
 checked. The result is a Verdict:
 
-    ok       - it may run (in "approve each step" mode the student is still asked);
-    confirm  - it may run only if the student says yes, even in autonomous mode;
+    ok       - it may run (in "approve each step" mode the user is still asked);
+    confirm  - it may run only if the user says yes, even in autonomous mode;
     block    - it does not run; the agent is told why.
 
 Blocked, always: sudo and other ways to become another user; installing software (pip,
@@ -16,7 +16,7 @@ programs that open windows (the agent has open_file for that); background jobs; 
 reading AskTim!'s keys and other credentials (~/.ssh, ~/.aws, ...); writing outside the
 agent's folder (redirections, tee, cp/mv/rm/mkdir/touch, sed -i, in-place gzip, index files
 that tools write next to their input, ...).
-Blocked unless the student allowed the internet (--web): downloads (curl, wget, git clone,
+Blocked unless the user allowed the internet (--web): downloads (curl, wget, git clone,
 SRA tools, NCBI E-utilities, code that uses requests/urllib/download.file ...).
 Confirm: deleting with rm -r or wildcards, writing to a place given by an unknown variable,
 running a script or program from outside the agent's folder, cluster jobs (sbatch ...),
@@ -518,7 +518,7 @@ class Context(object):
         self.cwd = self.run_dir
         self.functions = set()
         self.extra_writable = set()
-        # with --here: the files that were in the student's folder before the run (True: too many to list)
+        # with --here: the files that were in the user's folder before the run (True: too many to list)
         self.protect = None
         # symbolic links made earlier in the same command: link path -> what it points to
         self.links = {}
@@ -582,7 +582,7 @@ def writable(path, ctx):
     if any(inside(path, w) for w in ctx.extra_writable):
         return True
     if inside(path, ctx.student_dir) or inside(ctx.student_dir, path):
-        return False  # the student's own folder stays as it is, even when it lies under /tmp
+        return False  # the user's own folder stays as it is, even when it lies under /tmp
     return any(inside(path, t) and path != t or path == t for t in ctx.tmp)
 
 
@@ -730,7 +730,7 @@ def _link_target(src, dest, ctx):
 
 
 def protected(p, ctx):
-    """With --here: is p (or something under it) one of the student's own files?"""
+    """With --here: is p (or something under it) one of the user's own files?"""
     if not ctx.protect:
         return False
     if ctx.protect is True:
@@ -752,7 +752,7 @@ def _show(p, ctx):
 
 
 # Python in a notebook that would put HTML, JavaScript or Markdown of its own into the notebook page:
-# the page renders it as trusted, and script there can work the kernel without the student
+# the page renders it as trusted, and script there can work the kernel without the user
 _PAGE_TEXT = [
     (re.compile(r"\b(HTML|Javascript|JavaScript|Markdown|IFrame|SVG|Latex|Math)\s*\("), "IPython's display objects"),
     (re.compile(r"\bdisplay_(html|javascript|markdown|svg|latex|pretty|json)\b"), "IPython's display functions"),
@@ -765,7 +765,7 @@ _PAGE_TEXT = [
 
 
 def check_notebook_page(code, v):
-    """Python the agent wants to run in the student's notebook: does it write into the page itself?"""
+    """Python the agent wants to run in the user's notebook: does it write into the page itself?"""
     for pat, what in _PAGE_TEXT:
         if pat.search(code):
             v.block("the code would put HTML, JavaScript or Markdown of its own into the notebook page (%s); "
@@ -790,7 +790,7 @@ def _check_text_code(code, v, ctx, lang):
     if not ctx.allow_network:
         for pat, what in _NETWORK_TEXT:
             if pat.search(code):
-                v.block("the code uses the internet (%s), which is off for the agent (the student can allow it with --web)" % what)
+                v.block("the code uses the internet (%s), which is off for the agent (it can be allowed with --web)" % what)
                 break
     if _SUBPROCESS_TEXT.search(code):
         v.confirm("the %s code starts other programs, which AskTim! cannot check" % lang)
@@ -927,7 +927,7 @@ def _check_simple(c, v, ctx, depth):
         v.block("%s would run commands as another user" % base)
         return
     if base in PKG_TOOLS or (base in ("pip", "pip3", "uv", "conda", "mamba", "micromamba", "R", "Rscript", "python", "python3") and _installs(base, args)):
-        v.block("it installs or removes software (%s); the agent may use only what is installed - tell the student instead" % " ".join([base] + [a.text for a in args[:2]]))
+        v.block("it installs or removes software (%s); the agent may use only what is installed - say in the report what would be needed instead" % " ".join([base] + [a.text for a in args[:2]]))
         return
     if base in SYSTEM:
         v.block("%s changes the system or other programs; the agent may not use it" % base)
@@ -939,13 +939,13 @@ def _check_simple(c, v, ctx, depth):
         v.block("exec replaces the shell")
         return
     if base in ("history", "fc"):
-        v.block("the shell's history is private to the student")
+        v.block("the shell's history is private")
         return
     if base in INTERACTIVE:
         v.block("%s is interactive and needs a person at the keyboard; use non-interactive commands (head, grep, --help ...)" % base)
         return
     if base in GUI:
-        v.block("%s opens a window and would hold up the run; to show the student a file, use the open_file tool, which can name the program" % base)
+        v.block("%s opens a window and would hold up the run; to show a file, use the open_file tool, which can name the program" % base)
         return
     if base in ("dd",):
         for a in args:
@@ -974,7 +974,7 @@ def _check_simple(c, v, ctx, depth):
             v.block("wget would send data to a server; uploading is never allowed")
             return
         if not ctx.allow_network:
-            v.block("%s uses the internet, which is off for the agent (the student can allow downloads with --web)" % base)
+            v.block("%s uses the internet, which is off for the agent (downloads can be allowed with --web)" % base)
             return
         made = [a for a in args if _computed(a.raw, ctx)]
         if made:
@@ -1731,7 +1731,7 @@ def _program(c):
 
 def _check_downloaded_code(cmds, v):
     """curl URL | bash, bash -c "$(curl URL)", source <(curl URL): code from the internet would run
-    before AskTim! (or the student) could read it."""
+    before AskTim! (or the user) could read it."""
     fetched = False
     for c in cmds:
         if not c.piped:
@@ -1864,7 +1864,7 @@ def check_file_write(path, run_dir, content=None, student_dir=None, protect=None
         _check_workflow_text(content, p, sub, sctx, 0, os.path.dirname(p), set())
         if sub.level != "ok":
             v.notes.append("when snakemake runs it, the workflow would be %s: %s" % (
-                "refused" if sub.level == "block" else "stopped to ask the student", "; ".join(sub.reasons[:3])))
+                "refused" if sub.level == "block" else "stopped to ask the user", "; ".join(sub.reasons[:3])))
     return v, p
 
 

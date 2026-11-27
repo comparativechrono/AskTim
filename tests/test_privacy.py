@@ -55,7 +55,7 @@ def test_data_is_withheld(name):
         for tok in line.replace(",", " ").replace("\t", " ").split():
             if len(tok) >= 6 and any(c.isdigit() for c in tok) and tok.isalnum():
                 assert tok not in r.text, (name, tok, r.text)
-    assert "the student can see" in r.text
+    assert "the user can see" in r.text
 
 
 @pytest.mark.parametrize("name", sorted(KEPT))

@@ -1,10 +1,10 @@
-"""AskTim! Agent: the model works through tools, one step at a time, with the student watching.
+"""AskTim! Agent: the model works through tools, one step at a time, with the user watching.
 
 The ways of working are those of the AI agents practical:
 
-    approve   (default) nothing runs until the student allows it; they can change or refuse a step
-    plan      the agent writes a plan first; the student approves it (or asks for changes), then it works
-    auto      the agent works alone; the student watches and can press Ctrl+C
+    approve   (default) nothing runs until the user allows it; they can change or refuse a step
+    plan      the agent writes a plan first; the user approves it (or asks for changes), then it works
+    auto      the agent works alone; the user watches and can press Ctrl+C
     script    the agent writes one script and gets it to run
 
 Whatever the mode, AskTim! - not the model - decides what may run (safety.py), runs it
@@ -25,7 +25,7 @@ QUESTION_END = re.compile(r"\?\s*(\*\*|_|\))?\s*$")
 
 
 class Stop(Exception):
-    """The student stopped the run."""
+    """The user stopped the run."""
 
 
 class Agent(object):
@@ -46,6 +46,7 @@ class Agent(object):
         self.script_name = script_name
         self.nb = notebook  # the notebook side (notebook.NotebookTools), or None at the command line
         self.strict = cfg.strict
+        self.share_data = cfg.share_data  # the user has turned the data filter off (AskTim! privacy off)
         self.student_dir = os.path.realpath(student_dir or os.getcwd())
         self.ask_each = self.mode == "approve"
         self.withheld = 0
@@ -79,19 +80,18 @@ class Agent(object):
         return r if not r.startswith("../../../..") else paths.pretty(p)
 
     def _first_message(self):
-        g = context.Gathered()
-        task, _n, pasted = privacy.clean_question(self.task, strict=self.strict)  # data pasted into the task are withheld too
+        task, _n, pasted = privacy.clean_question(self.task, strict=self.strict, share_data=self.share_data)  # data pasted into the task are withheld too
         self.withheld += pasted
-        lines = ["The student's task:", task, ""]
+        lines = ["The user's task:", task, ""]
         listing = fileinfo.listing(self.student_dir, max_entries=60, strict=self.strict)
-        txt, n = privacy.clean(listing, strict=self.strict)
-        lines += ["The files in the student's folder (%s, which is %s from your folder):" % (paths.pretty(self.student_dir), self._rel(self.student_dir) or "."), txt, ""]
+        txt, n = privacy.clean(listing, strict=self.strict, share_data=self.share_data)
+        lines += ["The files in the user's folder (%s, which is %s from your folder):" % (paths.pretty(self.student_dir), self._rel(self.student_dir) or "."), txt, ""]
         # files that the task names: describe their structure
         for word in re.findall(r"[\w./~\-]+\.[A-Za-z0-9]{1,8}(?:\.gz)?", self.task):
             for base in (self.student_dir, self.work_dir):
                 p = os.path.join(base, os.path.expanduser(word))
                 if os.path.exists(p) and not os.path.isdir(p):
-                    d, _ = privacy.clean(fileinfo.describe(p, strict=self.strict, base=self.work_dir), strict=self.strict)
+                    d, _ = privacy.clean(fileinfo.describe(p, strict=self.strict, base=self.work_dir), strict=self.strict, share_data=self.share_data)
                     lines.append("About a file the task names: " + d)
                     break
         n_hist = self.cfg.get("history_lines")
@@ -99,10 +99,10 @@ class Agent(object):
         if self.cfg.get("send_history", True) and n_hist > 0:
             cmds, _src = history.recent(n_hist)
             if cmds:
-                lines += ["", "The student's last shell commands (for context only - mention one, such as a failed command, only if "
+                lines += ["", "The user's last shell commands (for context only - mention one, such as a failed command, only if "
                           "it bears on this task; oldest first):"]
                 for c in cmds:
-                    t, _ = privacy.clean(c.line, strict=self.strict)
+                    t, _ = privacy.clean(c.line, strict=self.strict, share_data=self.share_data)
                     lines.append("  $ %s%s" % (t, "   [exit %d]" % c.status if c.status else ""))
         lines += ["", viewers.describe()]
         if self.nb is not None:
@@ -142,7 +142,7 @@ class Agent(object):
         system = prompts.agent_system(inv_lines, self.cfg, self.mode, self._rel(self.work_dir) or ".", self._rel(self.student_dir) or ".",
                                       notebook=self.nb is not None, sandbox_note=(self.sandbox_note + ".") if self.sandbox else "", script_name=self.script_name,
                                       allow_network=self.allow_network, max_steps=self.max_steps, timeout=self.timeout)
-        tools = prompts.tool_specs(notebook=self.nb is not None)
+        tools = prompts.tool_specs(notebook=self.nb is not None, share_data=self.share_data)
         self.conv = Conversation()
         self.conv.user(self._first_message())
         rec = {
@@ -151,8 +151,12 @@ class Agent(object):
             "sandbox": self.sandbox_note, "allow_network": self.allow_network, "privacy": self.cfg.get("privacy"),
             "provider": self.provider.name, "steps": self.steps, "notebook": self.nb is not None,
         }
+        reminder = getattr(self.ui, "data_off_reminder", None)
+        if reminder is not None:
+            reminder(self.cfg)
         self.ui.start({"number": self.number, "mode": self.mode, "task": self.task, "folder": paths.pretty(self.work_dir),
-                       "sandbox": self.sandbox_note, "model": self.provider.describe(), "network": self.allow_network, "max_steps": self.max_steps})
+                       "sandbox": self.sandbox_note, "model": self.provider.describe(), "network": self.allow_network, "max_steps": self.max_steps,
+                       "share_data": self.share_data})
         outcome = "done"
         report = ""
         try:
@@ -160,11 +164,11 @@ class Agent(object):
                 self._plan_phase(system, tools, rec)
             report = self._loop(system, tools)
         except Stop:
-            outcome = "stopped by the student"
-            report = "(The student stopped the run.)"
+            outcome = "stopped by you"
+            report = "(You stopped the run.)"
         except KeyboardInterrupt:
-            outcome = "stopped by the student"
-            report = "(The student stopped the run with Ctrl+C.)"
+            outcome = "stopped by you"
+            report = "(You stopped the run with Ctrl+C.)"
         except ProviderError as e:
             outcome = "error"
             report = "(The run ended because of an error of the AI service: %s)" % e
@@ -203,7 +207,7 @@ class Agent(object):
             turn = self._ask_model(system, tools)
             if turn.tool_calls:
                 nudges += 1
-                self.conv.results([ToolResult(c.id, c.name, "Not run: write the plan first. Tools can be used once the student has approved it.", True) for c in turn.tool_calls],
+                self.conv.results([ToolResult(c.id, c.name, "Not run: write the plan first. Tools can be used once the user has approved it.", True) for c in turn.tool_calls],
                                   text="Send the plan now, without tool calls." if nudges < 3 else None)
                 if nudges >= 3:
                     raise ProviderError("The model kept calling tools instead of writing a plan.", kind="other")
@@ -216,10 +220,10 @@ class Agent(object):
                 raise Stop()
             if choice == "change":
                 rec["plan_feedback"].append(feedback)
-                self.conv.user("The student asks for changes to the plan: %s\nSend the whole plan again, changed, without tool calls." % feedback)
+                self.conv.user("The user asks for changes to the plan: %s\nSend the whole plan again, changed, without tool calls." % feedback)
                 continue
             self.ask_each = choice == "approve-steps"
-            self.conv.user("The student approved the plan%s. Carry it out now, step by step." % (" and will approve each step" if self.ask_each else ""))
+            self.conv.user("The user approved the plan%s. Carry it out now, step by step." % (" and will approve each step" if self.ask_each else ""))
             return
 
     def _loop(self, system, tools):
@@ -246,7 +250,7 @@ class Agent(object):
                     continue
                 if self.mode == "script" and not asked_for_script and not os.path.exists(os.path.join(self.work_dir, self.script_name)) and len(self.steps) < self.max_steps - 1:
                     asked_for_script = True
-                    self.conv.user("There is no %s in your folder. The student asked for one script that does the whole task. Write it now with write_file, "
+                    self.conv.user("There is no %s in your folder. The user asked for one script that does the whole task. Write it now with write_file, "
                                    "run it, and report when it has run without an error." % self.script_name)
                     continue
                 if QUESTION_END.search(turn.text or "") and self.ui.interactive and self.mode != "auto":
@@ -271,7 +275,7 @@ class Agent(object):
     def _handle(self, call):
         res = self._handle_inner(call)
         # a last line of defence: nothing goes back to the model without the identity and secret cleaning
-        res.content, _ = privacy.clean(res.content or "", strict=self.strict)
+        res.content, _ = privacy.clean(res.content or "", strict=self.strict, share_data=self.share_data)
         return res
 
     def _handle_inner(self, call):
@@ -281,7 +285,7 @@ class Agent(object):
         if "_incomplete" in call.input:
             step["decision"] = "blocked"
             step["blocked"] = ["the request was cut off"]
-            self.ui.warn("The agent's request was cut off; it is asked to send it again.")
+            self.ui.note("The agent's request was cut off; it is asked to send it again.")
             return ToolResult(call.id, call.name, "Your tool call was cut off before it was complete. Send it again (shorter).", True)
         try:
             if call.name == "run_command":
@@ -301,7 +305,7 @@ class Agent(object):
         return ToolResult(call.id, call.name, "There is no tool called %s." % call.name, True)
 
     def decide(self, step, kind, verdict, show):
-        """Ask the student when needed. Returns (decision, new_text_or_None, comment)."""
+        """Ask the user when needed. Returns (decision, new_text_or_None, comment)."""
         if verdict is not None and verdict.level == "block":
             step["decision"] = "blocked"
             step["blocked"] = list(verdict.reasons)
@@ -336,7 +340,7 @@ class Agent(object):
         if decision == "blocked":
             return ToolResult(call.id, call.name, "Not run: AskTim! does not allow this command – %s." % "; ".join(verdict.reasons), True)
         if decision == "refuse":
-            return ToolResult(call.id, call.name, "Not run: the student refused this step." + (" Their reason: %s" % comment if comment else ""), True)
+            return ToolResult(call.id, call.name, "Not run: the user refused this step." + (" Their reason: %s" % comment if comment else ""), True)
         prefix = ""
         if decision == "edit" and new is not None and new.strip() != cmd:
             step["original"] = cmd
@@ -347,10 +351,10 @@ class Agent(object):
                 step["decision"] = "blocked"
                 step["blocked"] = list(verdict.reasons)
                 self.ui.blocked(step, verdict)
-                return ToolResult(call.id, call.name, "The student changed the command, but AskTim! does not allow the new one either – %s." % "; ".join(verdict.reasons), True)
-            prefix = "The student changed the command before it ran; this ran instead:\n%s\n" % cmd + ("Their comment: %s\n" % comment if comment else "")
+                return ToolResult(call.id, call.name, "The user changed the command, but AskTim! does not allow the new one either – %s." % "; ".join(verdict.reasons), True)
+            prefix = "The user changed the command before it ran; this ran instead:\n%s\n" % cmd + ("Their comment: %s\n" % comment if comment else "")
         elif comment:
-            prefix = "The student allowed this step, with a comment: %s\n" % comment
+            prefix = "The user allowed this step, with a comment: %s\n" % comment
         before = None if self.sandbox else runner.snapshot(self.student_dir, self.record_dir)
         self.ui.running(step)
         res = runner.run(cmd, self.work_dir, timeout=self.timeout, sandbox=self.sandbox, on_output=self.ui.output)
@@ -364,7 +368,7 @@ class Agent(object):
         step.update({"exit": res.exit_code, "seconds": round(res.duration, 2), "timed_out": res.timed_out, "lines": res.lines})
         raw = res.text()
         step["output_tail"] = privacy.mask_identity(res.last_lines(30))
-        fr = privacy.filter_output(raw, kind=verdict.output_kind, strict=self.strict, places=[self.work_dir] + safety.named_dirs(cmd, self.work_dir))
+        fr = privacy.filter_output(raw, kind=verdict.output_kind, strict=self.strict, share_data=self.share_data, places=[self.work_dir] + safety.named_dirs(cmd, self.work_dir))
         self.withheld += fr.withheld
         step["withheld"] = fr.withheld
         body = privacy.shorten(fr.text, self.out_chars)
@@ -375,19 +379,19 @@ class Agent(object):
         if res.timed_out:
             parts.append("The command was stopped: it ran longer than %d seconds. Work on less at a time, or split the work into steps." % self.timeout)
         if res.interrupted:
-            parts.append("The student stopped this command with Ctrl+C.")
+            parts.append("The user stopped this command with Ctrl+C.")
         if body.strip():
             parts.append("Output (stdout and stderr together):\n" + body)
         else:
             parts.append("It printed nothing.")
         if ch and self.here:
-            # in the student's folder, new files are expected; changes to their own files are reported - the
+            # in the user's folder, new files are expected; changes to their own files are reported - the
             # files that were there when the run started, not ones the agent made in an earlier step
             start = self.protect if isinstance(self.protect, set) else None
             own = [paths.pretty(p) for p in ch["changed"] + ch["deleted"] if start is None or p in start]
             if own:
                 step["outside_changes"] = own
-                parts.append("Note: this step changed or deleted files that were already in the student's folder: %s." % ", ".join(own[:10]))
+                parts.append("Note: this step changed or deleted files that were already in the user's folder: %s." % ", ".join(own[:10]))
                 self.ui.warn("This step changed or deleted files that were already in your folder: %s" % ", ".join(own[:6]))
         elif ch:
             outside = [paths.pretty(p) for p in ch["created"] + ch["changed"] + ch["deleted"]]
@@ -414,7 +418,7 @@ class Agent(object):
         if decision == "blocked":
             return ToolResult(call.id, call.name, "Not written: %s." % "; ".join(verdict.reasons), True)
         if decision == "refuse":
-            return ToolResult(call.id, call.name, "Not written: the student refused this step." + (" Their reason: %s" % comment if comment else ""), True)
+            return ToolResult(call.id, call.name, "Not written: the user refused this step." + (" Their reason: %s" % comment if comment else ""), True)
         if decision == "edit" and new is not None:
             step["original"] = "(the file as the agent wrote it)"
             content = new
@@ -432,9 +436,9 @@ class Agent(object):
         lines = content.count("\n") + (0 if content.endswith("\n") or not content else 1)
         msg = "%s %s (%d line%s, %d bytes)." % ("Replaced" if existed else "Wrote", self._rel(full), lines, "" if lines == 1 else "s", len(content.encode("utf-8")))
         if decision == "edit":
-            msg = "The student changed the file before it was written. " + msg + " It now holds:\n" + privacy.shorten(content, 3000)
+            msg = "The user changed the file before it was written. " + msg + " It now holds:\n" + privacy.shorten(content, 3000)
         if comment:
-            msg += " The student's comment: %s" % comment
+            msg += " The user's comment: %s" % comment
         if verdict.notes:
             msg += " Note: " + "; ".join(verdict.notes)
         step["sent"] = msg
@@ -458,7 +462,7 @@ class Agent(object):
             step["blocked"] = ["%s holds credentials or private history" % sens]
             return ToolResult(call.id, call.name, "Not allowed: %s holds credentials or private history." % sens, True)
         desc = fileinfo.describe(p, strict=self.strict, base=self.work_dir)
-        desc, _ = privacy.clean(desc, strict=self.strict)
+        desc, _ = privacy.clean(desc, strict=self.strict, share_data=self.share_data)
         step["decision"] = "auto"
         step["sent"] = desc
         self.ui.inspected(step, desc)
@@ -486,9 +490,9 @@ class Agent(object):
         show = paths.pretty(p) + (" in %s" % program if program else "")
         decision, _new, comment = self.decide(step, "open", None, show)
         if decision in ("refuse", "blocked"):
-            return ToolResult(call.id, call.name, "Not opened: the student said no." + (" Their reason: %s" % comment if comment else ""), True)
+            return ToolResult(call.id, call.name, "Not opened: the user said no." + (" Their reason: %s" % comment if comment else ""), True)
         ok, how = self.ui.open_file(p, program=program)
         step["exit"] = 0 if ok else 1
-        msg = ("Opened %s for the student (%s). Nothing of it was sent to you." % (self._rel(p), how)) if ok else ("Could not open it: %s" % how)
+        msg = ("Opened %s for the user (%s). Nothing of it was sent to you." % (self._rel(p), how)) if ok else ("Could not open it: %s" % how)
         step["sent"] = msg
         return ToolResult(call.id, call.name, msg, not ok)
