@@ -20,9 +20,12 @@ DATA_OFF_REMINDER = "AskTim!'s data filter is off, so your data can be sent to t
 
 def data_off_reminder_due(cfg):
     """True (once a day) when the data filter is off: the reminder is due, and is now counted as given."""
-    if not cfg.share_data:
-        return False
-    stamp = os.path.join(paths.state_dir(), "data-filter-off-reminded")
+    return bool(cfg.share_data) and once_a_day("data-filter-off-reminded")
+
+
+def once_a_day(name):
+    """True the first time it is asked on a day (and the day is noted in AskTim!'s state folder)."""
+    stamp = os.path.join(paths.state_dir(), name)
     today = time.strftime("%Y-%m-%d")
     try:
         with open(stamp) as f:

@@ -79,8 +79,10 @@ When a question looks like coursework, it gives a hint first. For an error, it s
 message means. AskTim! remembers the conversation for an hour (`AskTim! new` starts afresh).
 
 The last 20 commands you typed are sent with each question, so "why did that fail?" works. To see
-which commands failed, AskTim! needs its shell integration (below); without it, it reads your
-shell's history file. Use `--no-history` to leave the commands out.
+each command as you type it, and which ones failed, AskTim! needs its shell integration (below).
+Without it, AskTim! reads your shell's history file, but bash writes that file only when a terminal
+closes, so the commands typed in a terminal that is still open are missing. AskTim! tells you when
+that happens. Use `--no-history` to leave the commands out.
 
 Put questions in quotes. In bash, use single quotes if the question contains `!` or `$`.
 
@@ -317,6 +319,18 @@ only you can read. Commands that start with a space are left out. In bash and zs
 puts the commands from AskTim!'s last answer on your command line, one at a time, for you to read
 and run. In zsh it also lets you type `?` and `*` in unquoted questions.
 
+New terminals load these lines themselves. In a terminal that was already open, run
+`source ~/.bashrc` (or `source ~/.zshrc`) once. `AskTim! status` says whether the lines are loaded
+in the terminal you are in.
+
+**Colab's terminal** runs in tmux, so closing and reopening it keeps the same shell, which has not
+read the new lines. After `pip install AskTim` in a new runtime, run this in the terminal:
+
+```bash
+AskTim! setup-shell
+source ~/.bashrc
+```
+
 ## Records and your statement on AI use
 
 `AskTim! log` lists your recent questions and agent runs. The log is kept on your computer.
@@ -417,6 +431,8 @@ asktim.agent("count the reads in data/*.fastq.gz", mode="auto")
   `asktim` (without the `!`). The agent needs bash, so use it in WSL (which works as Linux does) or
   Git Bash.
 - **zsh:** quote questions, or run `AskTim! setup-shell`.
+- **Colab's terminal:** run `AskTim! setup-shell` and then `source ~/.bashrc` in it, so that AskTim!
+  sees the commands you type there (see [Shell integration](#shell-integration)).
 
 ## Development
 

@@ -28,8 +28,10 @@ def offline_answer(ui, question, stdin_text=None, reason=None):
     return "\n".join(lines)
 
 
-def ask(cfg, ui, question, files=(), stdin_text=None, new=False, dry_run=False, provider=None, model=None, send_history=None, history_n=None, send_files=None):
-    """Answer one question at the command line. Returns the answer text (or None)."""
+def ask(cfg, ui, question, files=(), stdin_text=None, new=False, dry_run=False, provider=None, model=None, send_history=None, history_n=None, send_files=None,
+        needs_history=False):
+    """Answer one question at the command line. Returns the answer text (or None).
+    needs_history: the question is about the last command (AskTim! why)."""
     question = (question or "").strip()
     if not question and stdin_text:
         question = "What does this mean, and what should I do?"
@@ -70,6 +72,12 @@ def ask(cfg, ui, question, files=(), stdin_text=None, new=False, dry_run=False, 
             return None
         raise
     ui.data_off_reminder(cfg)
+    if g.history_gap and ui.t.interactive():
+        # this terminal's commands cannot be seen: say how to fix that (every time for `why`, else once a day)
+        from .ui import once_a_day
+
+        if needs_history or once_a_day("history-hint-shown"):
+            ui.t.warn(history.unseen_hint(g.history_gap))
     ui.chat_header(g.summary(), prov.describe())
     ui.thinking()
     try:

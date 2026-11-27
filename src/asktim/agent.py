@@ -97,10 +97,13 @@ class Agent(object):
         n_hist = self.cfg.get("history_lines")
         n_hist = 10 if n_hist is None else min(10, int(n_hist))
         if self.cfg.get("send_history", True) and n_hist > 0:
-            cmds, _src = history.recent(n_hist)
+            cmds, src = history.recent(n_hist)
             if cmds:
-                lines += ["", "The user's last shell commands (for context only - mention one, such as a failed command, only if "
-                          "it bears on this task; oldest first):"]
+                # when the commands typed in this terminal cannot be seen, say whose these are
+                gap = history.unseen_terminal()
+                where = "" if not gap else " from other terminals" if src == history.HOOK_SOURCE else " from earlier terminal sessions"
+                lines += ["", "The user's last shell commands%s (for context only - mention one, such as a failed command, only if "
+                          "it bears on this task; oldest first):" % where]
                 for c in cmds:
                     t, _ = privacy.clean(c.line, strict=self.strict, share_data=self.share_data)
                     lines.append("  $ %s%s" % (t, "   [exit %d]" % c.status if c.status else ""))

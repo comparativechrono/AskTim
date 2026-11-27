@@ -357,6 +357,18 @@ def setup(cfg, ui, prov, key, a, key_on_command_line=False):
     return 0
 
 
+def _in_colab():
+    """In a Google Colab runtime (its notebook, or a shell of its terminal)."""
+    if os.environ.get("COLAB_RELEASE_TAG") or "google.colab" in sys.modules:
+        return True
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("google.colab") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _short(p):
     from . import paths
 
@@ -472,6 +484,9 @@ def command(cfg, ui, name, a):
         from . import history, shell_setup
 
         sh = a.opts.get("--shell") or history.detect_shell()
+        if sh not in ("bash", "zsh", "fish") and not a.opts.get("--shell"):
+            # not typed in an interactive shell (a notebook cell, `!AskTim! setup-shell`): the user's usual shell
+            sh = history.usual_shell()
         if sh not in ("bash", "zsh", "fish"):
             t.error("AskTim! can set up bash, zsh and fish; your shell is %s." % sh)
             return 2
@@ -484,7 +499,12 @@ def command(cfg, ui, name, a):
         t.line("They record each command you type and whether it worked (never its output), so AskTim! can help with the latest one.")
         if sh != "fish":
             t.line("Alt+A then puts the commands from AskTim!'s last answer on your command line, one at a time, for you to read and run.")
-        t.line("Start a new terminal, or run:  source %s" % _short(f))
+        if os.environ.get("TMUX") or _in_colab():
+            # Colab's terminal runs in tmux: closing and reopening it finds the same shell, which has not read the new lines
+            t.line("Now run this once in each terminal that is open:  source %s" % _short(f))
+            t.line("(Closing and reopening the terminal is not enough: it runs in tmux, as Colab's terminal does, and keeps its shell.)")
+        else:
+            t.line("New terminals load them; in a terminal that is already open, run:  source %s" % _short(f))
         t.note("To undo:  AskTim! setup-shell --remove")
         return 0
     if name == "model":
@@ -515,7 +535,7 @@ def command(cfg, ui, name, a):
         from . import chat
 
         stdin = _read_stdin()
-        return 0 if chat.ask(cfg, ui, "Why did my last command fail, and how do I fix it?", stdin_text=stdin) is not None else 1
+        return 0 if chat.ask(cfg, ui, "Why did my last command fail, and how do I fix it?", stdin_text=stdin, needs_history=True) is not None else 1
     if name in ("insert", "cells"):
         t.note("`AskTim! %s` works in a notebook (it adds cells there)." % name)
         return 0
@@ -602,8 +622,12 @@ def status(cfg, ui):
                              "; fixed by your course" if cfg.is_locked("verbose") else ""))
     sh = history.detect_shell()
     hooked = shell_setup.installed(sh) if sh in ("bash", "zsh", "fish") else False
-    t.line("Shell: %s; AskTim!'s shell integration %s%s" % (sh, "is installed" if hooked else "is not installed (AskTim! setup-shell)",
-                                                           "; it is recording" if history.hook_active() else ""))
+    gap = history.unseen_terminal()
+    if gap and gap["installed"]:
+        state = "is installed but not loaded in this terminal (to load it: source %s)" % gap["rc"]
+    else:
+        state = ("is installed" if hooked else "is not installed (AskTim! setup-shell)") + ("; it is recording" if history.hook_active() else "")
+    t.line("Shell: %s; AskTim!'s shell integration %s" % (sh, state))
     sb, why = runner.make_sandbox(cfg.get("agent.sandbox") or "auto", os.getcwd(), os.getcwd(), False) if os.access(os.getcwd(), os.W_OK) else (None, "this folder cannot be written")
     t.line("Agent: at most %s steps, %s s per command, internet %s; %s" % (cfg.get("agent.max_steps"), cfg.get("agent.command_timeout"),
                                                                          "allowed" if cfg.get("agent.allow_network") else "off (unless --web)", sb.describe() if sb else "no sandbox (%s)" % why))
