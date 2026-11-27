@@ -1058,6 +1058,10 @@ def _magic(line, cell=None):
         inv = inventory.gather()
         _md("**What AskTim! would send (nothing has been sent):**\n\n" + _fence(prompts.chat_system(inventory.describe(inv, notebook_packages=_packages()), cfg, notebook=True), "text") + "\n\n" + _fence(g.text() + "Question: " + " ".join(a.pos[1:]), "text") + "\n\n" + safe_markdown(g.summary()))
         return None
+    if first == "gui" and all(w.startswith("--") for w in a.pos[1:]):
+        # (on a computer with a desktop - a local Jupyter - the floating head; in Colab it says there is no screen)
+        cli.gui_command(ui, [w.lower() for w in a.pos[1:] if w.lower() != "--foreground"])
+        return None
     if (len(a.pos) == 1 and first in cli.SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "privacy", "verbose")) or a.opts.get("--help"):
         if a.opts.get("--help") or first == "help":
             print(cli.HELP)

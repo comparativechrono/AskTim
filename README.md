@@ -13,9 +13,9 @@
 </p>
 
 AskTim! answers questions about the programs and packages installed on your computer, explains
-errors, and has an agent that can run the steps of an analysis for you, at the command line and in
-Jupyter or Colab notebooks. You use your own API key for Claude, Gemini or an OpenAI-compatible
-service.
+errors, and has an agent that can run the steps of an analysis for you: at the command line, in a
+window of its own on your desktop, and in Jupyter or Colab notebooks. You use your own API key for
+Claude, Gemini or an OpenAI-compatible service.
 
 AskTim! was made by Tim Hearn (University of Cambridge) to help people use AI responsibly, first in
 his teaching. It works like the AI panels in his practicals (bioinformatics-workbench, R-workbench,
@@ -27,6 +27,7 @@ that nobody needs to paste data into a chatbot to get help.
 $ AskTim! "how do I count the reads in a BAM file that mapped?"
 $ samtools sort aln.sam -o aln.bam; AskTim! why
 $ AskTim! Agent "map the reads in data/ to ref.fa and tell me how many map"
+$ AskTim! gui      # on a desktop: Tim's head on your screen; click it to chat
 ```
 
 ---
@@ -61,6 +62,19 @@ AskTim! checks the key with a tiny request and then keeps it in `~/.config/askti
 only you can read. A key can also come from an environment variable (`ANTHROPIC_API_KEY`,
 `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ASKTIM_CLAUDE_KEY` and so on) or from Colab's
 Secrets. `AskTim! status` shows which key and model are in use. `AskTim! forget` deletes stored keys.
+The settings of [AskTim!'s window](#the-window-asktim-gui) do the same with a form.
+
+**The model.** AskTim! uses Claude Sonnet (Gemini Flash with a Gemini key) unless you choose another:
+
+```bash
+AskTim! model opus             # the newest Opus: the most capable, slower and dearer
+AskTim! model haiku            # the newest Haiku: the fastest and cheapest (sonnet goes back)
+AskTim! model claude-opus-5-5  # a model by its full name
+AskTim! models                 # the models your key can use, newest first
+```
+
+For Gemini the short names are `flash`, `pro` and `flash-lite`. The choice is kept, for the command
+line, notebooks and the window alike.
 
 ## Ask a question
 
@@ -149,6 +163,52 @@ jobs to a cluster (`--executor slurm`) needs your yes.
 The agent can also open a file for you. An HTML report (FastQC, MultiQC), an image or a PDF opens
 in its usual program. A BAM or VCF file can open in IGV, an alignment in Jalview or AliView, and a
 tree in FigTree, if those programs are installed. You are asked every time.
+
+## The window (`AskTim! gui`)
+
+On a computer with a desktop:
+
+```bash
+AskTim! gui                # Tim's head appears on your screen; the terminal stays free
+AskTim! gui --shortcut     # also put AskTim! in your applications menu
+AskTim! gui --stop         # take it away again (or right-click the head: Quit AskTim!)
+```
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/comparativechrono/AskTim/main/assets/window.png" alt="AskTim!'s window: a question, an answer with Run and Copy buttons under its commands, and what the commands printed when they were run; Tim's head floats beside it" width="560">
+</p>
+
+Drag the head anywhere: it stays above your other windows, and where you leave it. Click it to open
+the chat. Right-click it for the agent, the settings and the folder AskTim! works in (at first, the
+folder where you typed `AskTim! gui`).
+
+- **Chat.** Ask as at the command line. Under each block of commands in an answer are **Run…** and
+  **Copy**. Run… shows the commands, which you can change, and what AskTim!'s checks make of them.
+  Then it runs them in the window's folder, one after the other, stopping at the first that fails,
+  and shows what each one prints. A `cd` or a variable lasts to the end of the block. When a command
+  fails, **Ask AskTim! about this error** sends the command and what it printed, with data withheld
+  as always. The next questions know which commands you ran from the window.
+- **What Run… won't do.** It checks the commands with the agent's checks. Some things the agent may
+  not do are shown as a warning, and you decide: installing a package, say, or deleting a whole
+  folder inside the window's folder. Other things never run from the window, whoever allows them:
+  anything that sends data to another computer, code straight from the internet, commands with
+  hidden control characters, reading keys and passwords, and changes outside the window's folder
+  (and /tmp), to disks or to the system. If you are sure, run those in a terminal. Programs that
+  wait for typing (an editor, `less`) need a terminal too.
+- **Agent.** Switch to Agent, choose a way of working (approve each step, plan first, autonomous,
+  write a script) and give it a task. A step that needs you has **Run it**, **Change…**, **Don't…**
+  (say why: the agent is told) and **Run all, stop asking**. A plan has **Run the plan** and **Ask
+  for changes…**. **Stop** ends a run. Its record (RUN.md, rerun.sh) is written as at the command line.
+- **Settings.** The AI service: service, model (**List the models** fetches the ones your key can
+  use), address and key, with **Test and save**. The data filter, as a slider (strict, on, off), and
+  what goes with a question. What the command line and notebooks show, as a slider (only the answer,
+  everything). The agent's limits. These are the settings that `AskTim! privacy`, `verbose`, `model`
+  and the rest change, so the command line, notebooks and the window share them. What your course
+  fixes is shown but can't be changed.
+
+The window needs Tk. Python from python.org (Windows, macOS) and conda have it. On Linux, install
+`python3-tk` (Debian, Ubuntu) or `python3-tkinter` (Fedora); AskTim! says which. There is no window
+over SSH or in Colab: use the command line there.
 
 ## In a notebook (Jupyter, JupyterLab, Colab, VS Code)
 
@@ -389,7 +449,9 @@ Things to think about before a class:
 | `AskTim! show "question"` | print what would be sent; send nothing |
 | `AskTim! Claude` / `Gemini` / `OpenAI` | store a key (and use that service) |
 | `AskTim! use claude\|gemini\|openai` | switch service |
-| `AskTim! model NAME` | change the model for the current service |
+| `AskTim! model NAME` | change the model: `opus`, `sonnet`, `haiku` (Claude), `flash`, `pro` (Gemini) or a full name |
+| `AskTim! models` | the models your key can use |
+| `AskTim! gui` | the window: a floating head with the chat, the agent and the settings (`--shortcut`, `--stop`) |
 | `AskTim! status` | key, model, data filter, shell integration and sandbox |
 | `AskTim! tools` | what AskTim! found installed |
 | `AskTim! privacy` | what is and isn't sent |
@@ -410,7 +472,7 @@ that command; `--no-history`, `--history N`, `--no-files`, `--file PATH`, `--new
 |---|---|---|
 | settings and keys | `~/.config/asktim/` (`config.json`, `keys.json`) | `%APPDATA%\asktim\` |
 | cache (installed tools, conversation, suggested commands) | `~/.cache/asktim/` | `%LOCALAPPDATA%\asktim\cache\` |
-| log and command history | `~/.local/state/asktim/` | `%LOCALAPPDATA%\asktim\state\` |
+| log, command history, where the window was | `~/.local/state/asktim/` | `%LOCALAPPDATA%\asktim\state\` |
 
 `ASKTIM_HOME=/some/folder` puts all three under one folder.
 
@@ -430,6 +492,9 @@ asktim.agent("count the reads in data/*.fastq.gz", mode="auto")
 - **Windows:** AskTim! is written to work there, but it hasn't been tested on Windows yet. Use
   `asktim` (without the `!`). The agent needs bash, so use it in WSL (which works as Linux does) or
   Git Bash.
+- **The window** (`AskTim! gui`) is tested on Linux (X11) and macOS. On Linux the head is cut to its
+  shape with X11's SHAPE extension; under Wayland it runs through XWayland. On Windows it is written
+  to work but hasn't been tried yet.
 - **zsh:** quote questions, or run `AskTim! setup-shell`.
 - **Colab's terminal:** run `AskTim! setup-shell` and then `source ~/.bashrc` in it, so that AskTim!
   sees the commands you type there (see [Shell integration](#shell-integration)).

@@ -45,6 +45,33 @@ def once_a_day(name):
 MODE_LABEL = {"approve": "approve each step", "plan": "plan first", "auto": "autonomous", "script": "write a script"}
 
 
+def open_path(path, program=None):
+    """Show a file (or a folder) with the computer's own program, or with `program`. (ok, how)"""
+    if program:
+        from . import viewers
+
+        return viewers.launch(path, program)
+    if sys.platform == "darwin":
+        cmd = ["open", path]
+    elif os.name == "nt":
+        try:
+            os.startfile(path)  # type: ignore[attr-defined]
+            return True, "with its default program"
+        except OSError as e:
+            return False, str(e)
+    else:
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return False, "this computer has no screen to show it on (no DISPLAY); %s can be opened on another computer" % paths.pretty(path)
+        if not shutil.which("xdg-open"):
+            return False, "xdg-open is not installed"
+        cmd = ["xdg-open", path]
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return True, "with its default program"
+    except OSError as e:
+        return False, str(e)
+
+
 class Decision(object):
     def __init__(self, choice, text=None, comment=None):
         self.choice = choice  # run | edit | refuse | all | stop
@@ -322,32 +349,17 @@ class TerminalUI(object):
                 return "cancel", None
 
     def reply_to_question(self, text):
+        # (the model's text is held back in an agent's run: show the question before asking for the answer)
+        text = (text or "").strip()
+        if text:
+            self.t.line()
+            md = self.t.markdown()
+            md.feed(visible(text))
+            md.close()
         return self.t.ask("\nThe agent asked you something. Your answer (Enter to end the run): ", "")
 
     def open_file(self, path, program=None):
-        if program:
-            from . import viewers
-
-            return viewers.launch(path, program)
-        if sys.platform == "darwin":
-            cmd = ["open", path]
-        elif os.name == "nt":
-            try:
-                os.startfile(path)  # type: ignore[attr-defined]
-                return True, "with its default program"
-            except OSError as e:
-                return False, str(e)
-        else:
-            if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-                return False, "this computer has no screen to show it on (no DISPLAY); %s can be opened on another computer" % paths.pretty(path)
-            if not shutil.which("xdg-open"):
-                return False, "xdg-open is not installed"
-            cmd = ["xdg-open", path]
-        try:
-            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            return True, "with its default program"
-        except OSError as e:
-            return False, str(e)
+        return open_path(path, program)
 
     def report(self, text, outcome):
         t = self.t

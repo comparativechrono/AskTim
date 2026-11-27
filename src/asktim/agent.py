@@ -360,7 +360,8 @@ class Agent(object):
             prefix = "The user allowed this step, with a comment: %s\n" % comment
         before = None if self.sandbox else runner.snapshot(self.student_dir, self.record_dir)
         self.ui.running(step)
-        res = runner.run(cmd, self.work_dir, timeout=self.timeout, sandbox=self.sandbox, on_output=self.ui.output)
+        res = runner.run(cmd, self.work_dir, timeout=self.timeout, sandbox=self.sandbox, on_output=self.ui.output,
+                         stop=getattr(self.ui, "stop_event", None))
         if res.interrupted:
             step["interrupted"] = True
             if self.ui.ask_stop():
@@ -382,7 +383,7 @@ class Agent(object):
         if res.timed_out:
             parts.append("The command was stopped: it ran longer than %d seconds. Work on less at a time, or split the work into steps." % self.timeout)
         if res.interrupted:
-            parts.append("The user stopped this command with Ctrl+C.")
+            parts.append("The user stopped this command.")
         if body.strip():
             parts.append("Output (stdout and stderr together):\n" + body)
         else:

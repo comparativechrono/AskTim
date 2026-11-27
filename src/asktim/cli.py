@@ -36,6 +36,10 @@ Let the agent do it (it asks before each step; nothing is installed; data stay o
       --web       allow downloads (curl, wget)  --here   work in this folder, not in asktim-runs/
       --steps N   at most N steps             --timeout S  seconds per command
 
+The window (on a computer with a desktop):
+  AskTim! gui                 a floating head: click it to chat or give the agent a task, right-click for settings
+      --shortcut  add it to your applications menu      --stop  close it
+
 More:
   AskTim! show "question"     print exactly what would be sent, and send nothing
   AskTim! status              settings, key, model, safeguards
@@ -43,7 +47,8 @@ More:
   AskTim! privacy             what is sent to the AI, and what never is
   AskTim! privacy off | on    let your data go to the AI, or keep them here (the default); it stays until changed
   AskTim! verbose on | off    show everything AskTim! has to say, or only the answer (the default); it stays until changed
-  AskTim! model NAME          change the model          AskTim! use claude|gemini|openai
+  AskTim! model NAME          change the model: opus, sonnet, haiku (Claude), flash (Gemini) or a full name
+  AskTim! models              the models your key can use       AskTim! use claude|gemini|openai
   AskTim! log                 your recent questions     AskTim! statement   a draft statement on your use of AI
   AskTim! new                 forget the conversation   AskTim! forget      delete your stored key(s)
 
@@ -55,7 +60,7 @@ In a notebook: `import asktim`, then type AskTim! … in a cell. `asktim` is the
 """
 
 SIMPLE_COMMANDS = {"status", "tools", "help", "version", "privacy", "verbose", "new", "reset", "forget", "logout", "log", "statement",
-                   "setup-shell", "model", "use", "why", "explain", "doctor", "insert", "cells"}
+                   "setup-shell", "model", "models", "use", "why", "explain", "doctor", "insert", "cells"}
 
 
 class Args(object):
@@ -226,6 +231,9 @@ def _main(argv):
             if not task:
                 return 2
         return run_agent(cfg, ui, task, a)
+
+    if first == "gui" and all(w.startswith("--") for w in a.pos[1:]):
+        return gui_command(ui, [w.lower() for w in a.pos[1:]])
 
     if first == "show" and len(a.pos) >= 2:
         from . import chat
@@ -398,6 +406,87 @@ def _check_key(cfg, ui, prov, key):
         return None
 
 
+def gui_command(ui, words):
+    """AskTim! gui [--stop | --shortcut | --foreground]: the floating head, in the background."""
+    import signal
+    import subprocess
+    import time
+
+    from . import gui, paths
+    from .gui import backend
+
+    t = ui.t
+    unknown = [w for w in words if w not in ("--stop", "--shortcut", "--foreground")]
+    if unknown:
+        t.error("AskTim! gui knows --stop, --shortcut and --foreground, not %s." % " ".join(unknown))
+        return 2
+    if "--stop" in words:
+        pid = backend.running_pid()
+        if not pid:
+            t.note("AskTim!'s window is not open.")
+            return 0
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError as e:
+            t.error("Could not close it: %s" % e)
+            return 1
+        t.good("AskTim!'s window is closed.")
+        return 0
+    if "--shortcut" in words:
+        from .gui import shortcut
+
+        try:
+            where = shortcut.install()
+        except Exception as e:
+            t.error("Could not add a shortcut: %s" % e)
+            return 1
+        t.good("Added a shortcut that starts AskTim!'s window: %s" % paths.pretty(where))
+        if "--foreground" not in words:
+            return 0
+    ok, why = gui.available()
+    if not ok:
+        t.error(why)
+        return 2
+    if "--foreground" in words:
+        from .gui.app import main as run_window
+
+        return run_window(folder=os.getcwd())
+    pid = backend.running_pid()
+    if pid:
+        try:
+            os.kill(pid, signal.SIGUSR1)
+            t.good("AskTim! is on your screen already; its chat is open.")
+        except (OSError, AttributeError):
+            t.good("AskTim! is on your screen already.")
+        return 0
+    paths.ensure(paths.state_dir(), private=True)
+    log = os.path.join(paths.state_dir(), "window.log")
+    exe = sys.executable
+    kwargs = {}
+    if os.name == "nt":
+        pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        exe = pyw if os.path.exists(pyw) else exe
+        kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    with open(log, "w") as out:
+        proc = subprocess.Popen([exe, "-m", "asktim.gui", "--folder", os.getcwd()], stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                                close_fds=True, **kwargs)
+    for _ in range(15):
+        time.sleep(0.1)
+        if proc.poll() is not None:
+            try:
+                with open(log) as f:
+                    tail = f.read().strip().splitlines()[-6:]
+            except OSError:
+                tail = []
+            t.error("AskTim!'s window could not start%s" % (":\n  " + "\n  ".join(tail) if tail else "."))
+            return 1
+    t.good("AskTim! is on your screen: click the head to chat, drag it to move it, right-click it for more.")
+    t.note("It works in this folder (%s); the chat's Folder button changes that. AskTim! gui --stop closes it." % paths.pretty(os.getcwd()))
+    return 0
+
+
 def run_agent(cfg, ui, task, a):
     from .agent import Agent
     from .providers import ProviderError, make_provider
@@ -508,14 +597,47 @@ def command(cfg, ui, name, a):
         t.note("To undo:  AskTim! setup-shell --remove")
         return 0
     if name == "model":
+        from . import models
+
+        short = sorted(models.SHORT.get(cfg.provider, {}))
         if not arg:
             t.line("%s: %s" % (_config.PROVIDER_NAMES[cfg.provider], cfg.model()))
+            t.note("Change it with:  AskTim! model NAME%s.   AskTim! models lists the models your key can use."
+                   % (" (%s, or a full name)" % ", ".join(short) if short else ""))
             return 0
         if cfg.is_locked("models." + cfg.provider):
             t.error("Your course's settings fix the model.")
             return 1
-        _config.save_user_setting("models." + cfg.provider, arg)
-        t.good("AskTim! will use %s for %s." % (arg, _config.PROVIDER_NAMES[cfg.provider]))
+        try:
+            chosen, how = models.resolve(cfg, arg)
+        except ValueError as e:
+            t.error(str(e))
+            t.note("AskTim! models lists the models your key can use.")
+            return 2
+        _config.save_user_setting("models." + cfg.provider, chosen)
+        t.good("AskTim! will use %s for %s%s." % (chosen, _config.PROVIDER_NAMES[cfg.provider], "" if chosen == arg else " (%s: %s)" % (arg, how)))
+        return 0
+    if name == "models":
+        from . import models
+        from .providers import ProviderError
+
+        try:
+            found = models.list_models(cfg)
+        except ProviderError as e:
+            t.error(str(e))
+            short = models.SHORT.get(cfg.provider, {})
+            if short:
+                t.note("Short names AskTim! knows: " + ", ".join("%s (%s)" % (k, v) for k, v in sorted(short.items())))
+            return 1
+        current = cfg.model()
+        t.line("Models your key can use with %s (newest first):" % _config.PROVIDER_NAMES[cfg.provider])
+        for m in found:
+            mark = "→ " if m.id == current else "  "
+            about = models.ABOUT.get(m.family(), "") if cfg.provider in ("claude", "gemini") else ""
+            t.line("%s%-34s %s%s" % (mark, m.id, m.name if m.name != m.id else "", ("  · " + about) if about else ""))
+        if current not in [m.id for m in found]:
+            t.warn("The model in use, %s, is not in the list." % current)
+        t.note("Choose one with:  AskTim! model NAME" + ("   (or a short name: %s)" % ", ".join(sorted(models.SHORT[cfg.provider])) if models.SHORT.get(cfg.provider) else ""))
         return 0
     if name == "use":
         p = _config.normalise_provider(arg)
