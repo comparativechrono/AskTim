@@ -7,6 +7,9 @@ data do not belong in AI tools. AskTim! adds what the practicals could do by con
 it keeps data away from the model, and tells the model so.
 """
 
+import os
+
+
 ROLE = (
     "You are AskTim!, an AI assistant for students learning bioinformatics and computational biology. "
     "Tim Hearn, a bioinformatician at the University of Cambridge, made AskTim! for his students; you are an AI model, not Tim, "
@@ -78,9 +81,12 @@ AGENT_RULES = [
     "variants, intervals, table rows, lists of IDs or numbers) are replaced by a note saying how many lines were withheld. You get "
     "exit statuses, error messages, warnings, help text, versions, counts, summaries and file listings. Work with that: check what "
     "you make with commands that summarise (wc -l, ls -lh, md5sum, samtools flagstat, samtools quickcheck, PROGRAM --help), and use "
-    "inspect_file to learn the format and structure of a file (format, size, number of records, columns). Never try to get round "
-    "the filter (by encoding, reversing, splitting or sampling data, or by printing single values). The student sees the full "
-    "output of every command, so when the answer is in the data, tell them where to look.",
+    "inspect_file to learn the format and structure of a file (format, size, number of records, columns). Counts and other summary "
+    "numbers (how many reads or variants, a mapping rate, a mean) are not data, and they reach you when you print each one as "
+    "`name: value`, with the colon - `echo \"reads in test_1: $n\"`, `print('variants with QUAL > 30:', n)` - or when a summary "
+    "program prints them (samtools flagstat, seqkit stats, bcftools stats); bare numbers, lists and tables are withheld. Never try to get round the "
+    "filter (by encoding, reversing, splitting or sampling data, or by printing values from the data one at a time). The student "
+    "sees the full output of every command, so when the answer is in the data, tell them where to look.",
     "Commands run without a terminal: nothing can be typed in, so never start interactive programs (less, nano, vim, top, a bare "
     "python or R). Use non-interactive options. A command that runs longer than {timeout} seconds is stopped; break long work into "
     "steps. Of long output you get only part, so write big results to files and summarise them.",
@@ -120,7 +126,9 @@ NOTEBOOK_AGENT_RULES = [
     "Use add_markdown_cell and add_code_cell to put explanations and code into the student's notebook, for them to keep and to run "
     "themselves. When the task is to build part of a notebook (load a table, make a plot, explain a method), write cells for the student "
     "rather than running everything yourself; when the task is to find something out, run code and then add the code that worked as cells.",
-    "Save files your code makes in your folder ({run_dir_rel}); read the student's files where they are.",
+    "Your code runs in your folder ({run_dir_rel}), as your commands do: files it makes with a relative path go there. The student's "
+    "files are where they are: a path that the student's own code uses (data/x.csv, relative to the notebook) is "
+    "{student_dir_rel}/data/x.csv from your folder.",
 ]
 
 
@@ -150,19 +158,28 @@ def agent_system(inventory_lines, cfg, mode, run_dir_rel, student_dir_rel, noteb
         "blocked. Work with the files that are on the computer. If the task needs a download, say so in your report (the student can "
         "allow downloads with `AskTim! Agent --web ...`)."
     )
-    folder = (
-        "Your folder is {run} (inside the student's folder {student}). Every command starts there; a `cd` lasts only until the end of "
-        "that command. Write files only inside your folder (and $TMPDIR for scratch): commands that would write anywhere else - including "
-        "index files that some programs write next to their input, such as bwa index or samtools faidx - are blocked. Read the student's "
-        "input files where they are (use paths such as ../../data/reads.fq or absolute paths); to index an input, link it into your "
-        "folder first (ln -s ../../data/ref.fa .) and index the link.{sandbox}"
-    ).format(run=run_dir_rel, student=student_dir_rel, sandbox=(" " + sandbox_note) if sandbox_note else "")
+    if os.path.normpath(run_dir_rel) == os.path.normpath(student_dir_rel):
+        # --here: the agent works in the student's own folder, so their files are not at ../..
+        folder = (
+            "You work in the student's own folder ({run}), because they asked for that (--here). Every command starts there; a `cd` "
+            "lasts only until the end of that command. The student's files are here: use paths such as data/reads.fq. You may make "
+            "new files and folders here (and use $TMPDIR for scratch). AskTim! asks the student before any change to a file that was "
+            "already here, so do not overwrite, move or delete their files; writing outside this folder is blocked.{sandbox}"
+        ).format(run=run_dir_rel, sandbox=(" " + sandbox_note) if sandbox_note else "")
+    else:
+        folder = (
+            "Your folder is {run} (inside the student's folder {student}). Every command starts there; a `cd` lasts only until the end of "
+            "that command. Write files only inside your folder (and $TMPDIR for scratch): commands that would write anywhere else - including "
+            "index files that some programs write next to their input, such as bwa index or samtools faidx - are blocked. Read the student's "
+            "input files where they are (use paths such as {student}/data/reads.fq or absolute paths); to index an input, link it into your "
+            "folder first (ln -s {student}/data/ref.fa .) and index the link.{sandbox}"
+        ).format(run=run_dir_rel, student=student_dir_rel, sandbox=(" " + sandbox_note) if sandbox_note else "")
     max_steps = int(max_steps or cfg.get("agent.max_steps") or 25)
     timeout = int(timeout or cfg.get("agent.command_timeout") or 600)
     rules = [r.format(network=network, folder=folder, timeout=timeout, max_steps=max_steps) for r in AGENT_RULES]
     lines = [AGENT_ROLE, "", "How you work:"] + ["- " + r for r in rules]
     if notebook:
-        lines += ["", "In the notebook:"] + ["- " + r.format(run_dir_rel=run_dir_rel) for r in NOTEBOOK_AGENT_RULES]
+        lines += ["", "In the notebook:"] + ["- " + r.format(run_dir_rel=run_dir_rel, student_dir_rel=student_dir_rel) for r in NOTEBOOK_AGENT_RULES]
     script_run = "bash " + script_name if script_name.endswith(".sh") else ("python " + script_name if script_name.endswith(".py") else "Rscript " + script_name)
     lines += ["", "The way of working the student chose:", AGENT_MODES.get(mode, AGENT_MODES["approve"]).format(script_name=script_name, script_run=script_run)]
     lines += course_lines(cfg)

@@ -27,18 +27,25 @@ BASH = r'''# >>> AskTim! shell integration >>>
 if [ -n "$BASH_VERSION" ] && [ -z "$__ASKTIM_HOOKED" ]; then
   __ASKTIM_HOOKED=1
   __asktim_log="${ASKTIM_HOME:+$ASKTIM_HOME/state}"; __asktim_log="${__asktim_log:-${XDG_STATE_HOME:-$HOME/.local/state}/asktim}/commands.tsv"
-  __asktim_last_n=""
+  __asktim_last_n=""; __asktim_started=""
+  [ -d "${__asktim_log%/*}" ] || mkdir -p "${__asktim_log%/*}" 2>/dev/null
   __asktim_prompt() {
     local s=$? h n c
     h=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
     h="${h#"${h%%[![:space:]]*}"}"; n="${h%%[[:space:]]*}"; c="${h#"$n"}"; c="${c#"${c%%[![:space:]]*}"}"
+    if [ -z "$__asktim_started" ]; then
+      # the first prompt of a new shell: the newest line of the history is a command from an earlier session
+      __asktim_started=1; __asktim_last_n=$n; return $s
+    fi
     if [ -n "$c" ] && [ "$n" != "$__asktim_last_n" ]; then
       __asktim_last_n=$n
       c=${c//$'\t'/ }; c=${c//$'\n'/$'\x1e'}
-      if [ "${BASH_VERSINFO[0]}" -ge 4 ] 2>/dev/null; then
-        printf '%(%s)T\t%s\t%s\t%s\n' -1 "$s" "$PWD" "$c" >> "$__asktim_log" 2>/dev/null
+      if [ ! -d "${__asktim_log%/*}" ]; then
+        :  # the folder for the log is gone: record nothing (and print no error after every command)
+      elif [ "${BASH_VERSINFO[0]}" -ge 4 ] 2>/dev/null; then
+        printf '%(%s)T\t%s\t%s\t%s\n' -1 "$s" "$PWD" "$c" 2>/dev/null >> "$__asktim_log"
       else
-        printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$s" "$PWD" "$c" >> "$__asktim_log" 2>/dev/null
+        printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$s" "$PWD" "$c" 2>/dev/null >> "$__asktim_log"
       fi
     fi
     return $s
@@ -67,13 +74,14 @@ if [ -n "$ZSH_VERSION" ] && [ -z "$__ASKTIM_HOOKED" ]; then
   typeset -g __ASKTIM_HOOKED=1
   typeset -g __asktim_log="${ASKTIM_HOME:+$ASKTIM_HOME/state}"; __asktim_log="${__asktim_log:-${XDG_STATE_HOME:-$HOME/.local/state}/asktim}/commands.tsv"
   typeset -g __asktim_cmd=""
+  [[ -d "${__asktim_log%/*}" ]] || mkdir -p "${__asktim_log%/*}" 2>/dev/null
   zmodload zsh/datetime 2>/dev/null
   __asktim_preexec() { [[ "$1" == " "* ]] && __asktim_cmd="" || __asktim_cmd="$1" }
   __asktim_precmd() {
     local s=$?
     if [[ -n "$__asktim_cmd" ]]; then
       local c="${__asktim_cmd//$'\t'/ }"; c="${c//$'\n'/$'\x1e'}"
-      print -r -- "${EPOCHSECONDS:-0}"$'\t'"$s"$'\t'"$PWD"$'\t'"$c" >> "$__asktim_log" 2>/dev/null
+      [[ -d "${__asktim_log%/*}" ]] && { print -r -- "${EPOCHSECONDS:-0}"$'\t'"$s"$'\t'"$PWD"$'\t'"$c" >> "$__asktim_log" } 2>/dev/null
       __asktim_cmd=""
     fi
     return $s
@@ -103,12 +111,14 @@ FISH = r'''# >>> AskTim! shell integration >>>
 # AskTim! sees the commands you type (never their output) and which ones failed.
 # To turn this off: AskTim! setup-shell --remove   (or delete this file)
 set -l __asktim_state (set -q ASKTIM_HOME; and echo $ASKTIM_HOME/state; or begin; set -q XDG_STATE_HOME; and echo $XDG_STATE_HOME/asktim; or echo $HOME/.local/state/asktim; end)
+set -g __asktim_dir $__asktim_state
 set -g __asktim_log $__asktim_state/commands.tsv
+test -d $__asktim_dir; or mkdir -p $__asktim_dir 2>/dev/null
 function __asktim_postexec --on-event fish_postexec
     set -l s $status
     string match -q -r '^ ' -- $argv[1]; and return
     set -l c (string join \x1e -- $argv[1] | string replace -a \t ' ')
-    printf '%s\t%s\t%s\t%s\n' (date +%s) $s $PWD "$c" >> $__asktim_log 2>/dev/null
+    test -d $__asktim_dir; and printf '%s\t%s\t%s\t%s\n' (date +%s) $s $PWD "$c" >> $__asktim_log 2>/dev/null
 end
 # <<< AskTim! shell integration <<<
 '''

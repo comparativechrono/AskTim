@@ -378,7 +378,7 @@ def run_agent(cfg, ui, task, a):
     from .agent import Agent
     from .providers import ProviderError, make_provider
 
-    mode = "plan" if a.opts.get("--plan") else "auto" if a.opts.get("--auto") else "script" if a.opts.get("--script") else "approve"
+    mode = "plan" if a.opts.get("--plan") else "script" if a.opts.get("--script") else "auto" if a.opts.get("--auto") else "approve"
     if mode in ("approve", "plan") and not ui.interactive:
         ui.error("The agent needs you at the keyboard to approve its steps. Run it in a terminal, or let it work alone with --auto.")
         return 2

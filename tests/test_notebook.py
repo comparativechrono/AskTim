@@ -58,7 +58,7 @@ def test_key_typed_into_a_cell_is_scrubbed(kernel, mock):
 def test_notebook_agent(kernel, mock, project):
     pytest.importorskip("pandas")
     mock.queue = [
-        {"text": "First the table.", "tools": [("run_python", {"code": "import pandas as pd\ngenes = pd.read_csv('data/genes.csv')\nprint(genes.head())\ngenes.shape", "why": "Load the table."})]},
+        {"text": "First the table.", "tools": [("run_python", {"code": "import pandas as pd\ngenes = pd.read_csv('../../data/genes.csv')\nprint(genes.head())\ngenes.shape", "why": "Load the table."})]},
         {"tools": [("describe_variable", {"name": "genes"})]},
         {"tools": [("run_python", {"code": "n = int(genes['essential'].astype(str).eq('True').sum())\nprint('essential genes:', n)", "why": "Count."})]},
         {"tools": [("add_markdown_cell", {"text": "## Essential genes"}), ("add_code_cell", {"code": "genes['essential'].value_counts()", "why": "Counts."})]},
@@ -80,6 +80,22 @@ def test_notebook_agent(kernel, mock, project):
     assert r2["payload"] and r2["payload"][0]["text"].startswith("# AskTim! cell 2 of 2")
     rec = sorted(glob.glob(str(project / "asktim-runs" / "*" / "agent-record.ipynb")))[-1]
     assert json.load(open(rec))["nbformat"] == 4
+
+
+def test_notebook_agent_code_runs_in_its_folder(kernel, mock, project):
+    # the agent is told its code runs in its folder, and AskTim! checks it as if it does: so it must
+    mock.queue = [
+        {"tools": [("run_python", {"code": "import os\nopen('made_by_agent.txt', 'w').write('x')\nprint('here:', os.path.basename(os.getcwd()))", "why": "Write."})]},
+        {"text": "Done."},
+    ]
+    r = kernel.run('AskTim! Agent --auto "write a file"')
+    assert r["status"] == "ok" and not r["errors"], r
+    assert not (project / "made_by_agent.txt").exists()
+    made = glob.glob(str(project / "asktim-runs" / "*" / "made_by_agent.txt"))
+    assert len(made) == 1
+    # the notebook's own folder comes back for the student's next cell
+    assert kernel.run("import os; print(os.getcwd())")["stream"].strip() == str(project)
+    assert "Your code runs in your folder" in json.dumps(mock.requests[0]["body"]["system"])
 
 
 def test_agent_will_not_run_unattended_in_approve_mode(project, env, mock):

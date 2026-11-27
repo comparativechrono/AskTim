@@ -134,3 +134,52 @@ def test_the_inventory_notices_programs_installed_later(tmp_path, monkeypatch):
     assert inventory.gather()["tools"]["bcftools"]["version"] == "1.19"
     prog.unlink()
     assert "bcftools" not in inventory.gather()["tools"]
+
+
+@pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+def test_shell_hook_is_quiet_without_its_folder_and_skips_old_history(tmp_path, monkeypatch, shell):
+    # the hook printed "No such file or directory" after every command when its folder was missing,
+    # and bash recorded the last command of an earlier session as if it had just run
+    pexpect = pytest.importorskip("pexpect")
+    if not shutil.which(shell):
+        pytest.skip("%s is not installed" % shell)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("ASKTIM_HOME", str(tmp_path / "asktim"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("ZDOTDIR", raising=False)
+    shell_setup.install(shell)
+    (home / ".hist").write_text("an_old_command_from_yesterday\n")
+    state = tmp_path / "asktim" / "state"
+    env = dict(os.environ, HISTFILE=str(home / ".hist"))
+    c = pexpect.spawn(shell, ["-d", "-i"] if shell == "zsh" else ["-i"], env=env, encoding="utf-8", timeout=15)
+    c.expect(r"[#$%>] ")
+    c.sendline("PS1='READ''Y> '; PROMPT='READ''Y> '" if shell != "fish" else "function fish_prompt; echo -n 'READ''Y> '; end")
+    c.expect_exact("READY> ")
+    c.sendline("echo first")
+    c.expect_exact("READY> ")
+    c.sendline("rm -rf '%s'" % state)
+    c.expect_exact("READY> ")
+    c.sendline("echo after")
+    c.expect_exact("READY> ")
+    quiet = c.before
+    c.sendline("exit")
+    c.expect(pexpect.EOF)
+    c.close()
+    assert "No such file" not in quiet and "no such file" not in quiet and "redirect" not in quiet, quiet
+    # a new shell makes the folder again, and does not record an old command
+    shutil.rmtree(str(state), ignore_errors=True)
+    c = pexpect.spawn(shell, ["-d", "-i"] if shell == "zsh" else ["-i"], env=env, encoding="utf-8", timeout=15)
+    c.expect(r"[#$%>] ")
+    c.sendline("PS1='READ''Y> '; PROMPT='READ''Y> '" if shell != "fish" else "function fish_prompt; echo -n 'READ''Y> '; end")
+    c.expect_exact("READY> ")
+    c.sendline("echo second")
+    c.expect_exact("READY> ")
+    c.sendline("exit")
+    c.expect(pexpect.EOF)
+    c.close()
+    time.sleep(0.2)
+    text = (state / "commands.tsv").read_text()
+    assert "echo second" in text and "an_old_command_from_yesterday" not in text
+    shell_setup.remove(shell)

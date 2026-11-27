@@ -588,7 +588,7 @@ class NotebookTools(object):
             elif s.startswith(("%pip", "%conda", "%mamba")):
                 v.block("installing packages is not allowed")
         for sh in shell:
-            sv = safety.check(sh, agent.work_dir, allow_network=agent.allow_network, student_dir=agent.student_dir, cwd=os.getcwd(), protect=agent.protect)
+            sv = safety.check(sh, agent.work_dir, allow_network=agent.allow_network, student_dir=agent.student_dir, cwd=agent.work_dir, protect=agent.protect)
             for r in sv.reasons:
                 (v.block if sv.level == "block" else v.confirm)(r)
         return v
@@ -621,11 +621,19 @@ class NotebookTools(object):
         old_out, old_err = sys.stdout, sys.stderr
         t0 = time.time()
         _STATE["nested"] += 1
+        # the code runs in the agent's folder, as its commands do (and as AskTim! checked it): a relative
+        # path it writes must not land in the student's folder. The notebook's own folder comes back after.
+        old_cwd = os.getcwd()
         try:
             pub.publish = publish
             sys.stdout, sys.stderr = _Tee(old_out, buf), _Tee(old_err, buf)
+            os.chdir(agent.work_dir)
             res = self.ip.run_cell(code, store_history=False)
         finally:
+            try:
+                os.chdir(old_cwd)
+            except OSError:
+                pass
             sys.stdout, sys.stderr = old_out, old_err
             pub.publish = orig_publish
             _STATE["nested"] -= 1
@@ -965,7 +973,7 @@ def _magic(line, cell=None):
         if not task:
             print("Give the agent a task:  AskTim! Agent \"what it should do\"")
             return None
-        mode = "plan" if a.opts.get("--plan") else "auto" if a.opts.get("--auto") else "script" if a.opts.get("--script") else "approve"
+        mode = "plan" if a.opts.get("--plan") else "script" if a.opts.get("--script") else "auto" if a.opts.get("--auto") else "approve"
         nb_agent(task, mode=mode, here=bool(a.opts.get("--here")), web=True if a.opts.get("--web") else None, steps=a.opts.get("--steps"), timeout=a.opts.get("--timeout"), model=a.opts.get("--model"))
         return None
     if first == "insert" and len(a.pos) == 2 and a.pos[1].isdigit():

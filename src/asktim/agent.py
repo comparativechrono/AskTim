@@ -99,7 +99,8 @@ class Agent(object):
         if self.cfg.get("send_history", True) and n_hist > 0:
             cmds, _src = history.recent(n_hist)
             if cmds:
-                lines += ["", "The student's last shell commands (for context; oldest first):"]
+                lines += ["", "The student's last shell commands (for context only - mention one, such as a failed command, only if "
+                          "it bears on this task; oldest first):"]
                 for c in cmds:
                     t, _ = privacy.clean(c.line, strict=self.strict)
                     lines.append("  $ %s%s" % (t, "   [exit %d]" % c.status if c.status else ""))
@@ -380,8 +381,10 @@ class Agent(object):
         else:
             parts.append("It printed nothing.")
         if ch and self.here:
-            # in the student's folder, new files are expected; changes to their own files are reported
-            own = [paths.pretty(p) for p in ch["changed"] + ch["deleted"]]
+            # in the student's folder, new files are expected; changes to their own files are reported - the
+            # files that were there when the run started, not ones the agent made in an earlier step
+            start = self.protect if isinstance(self.protect, set) else None
+            own = [paths.pretty(p) for p in ch["changed"] + ch["deleted"] if start is None or p in start]
             if own:
                 step["outside_changes"] = own
                 parts.append("Note: this step changed or deleted files that were already in the student's folder: %s." % ", ".join(own[:10]))

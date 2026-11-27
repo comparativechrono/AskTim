@@ -294,7 +294,9 @@ class TerminalUI(object):
         t = self.t
         t.rule("", "cyan")
         t.note("AskTim! wrote the record of this run: %s" % ", ".join(written))
-        t.note("Read RUN.md to check what happened, and rerun.sh before you run it. The report above is the model's own words: check it.")
+        rerun = any(os.path.basename(w) == "rerun.sh" for w in written)
+        t.note("Read RUN.md to check what happened%s. The report above is the model's own words: check it."
+               % (", and rerun.sh before you run it" if rerun else ""))
 
     # -- chat -----------------------------------------------------------------------------------
 
