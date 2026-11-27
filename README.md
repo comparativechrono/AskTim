@@ -90,9 +90,9 @@ To see exactly what would be sent, without sending anything:
 AskTim! show "how do I index this BAM file?"
 ```
 
-By default AskTim! prints only the answer. Add `-v` (or `--verbose`) to see what was sent with
-your question, which model answered, and AskTim!'s other notes. To make that the default, put
-`"verbose": true` in your settings or set `ASKTIM_VERBOSE=1`.
+By default AskTim! prints only the answer. `AskTim! verbose on` makes it also show what was sent
+with each question, which model answered, and its other notes, until you run `AskTim! verbose off`.
+For a single command, add `-v` (or `--verbose`) to see everything, or `-q` to see only the answer.
 
 ## The agent
 
@@ -127,7 +127,7 @@ output, and where the record of the run is (the example above is with `-v`).
 | `--web` | lets it download things (curl, wget); nothing may be uploaded |
 | `--here` | works in this folder, not in a new run folder (asks before it changes any file already there) |
 | `--steps N`, `--timeout S` | at most N steps (default 25); at most S seconds per command (default 600) |
-| `-v` | shows everything AskTim! has to say, not only the steps and the report |
+| `-v`, `-q` | for this run: everything AskTim! has to say, or only the steps and the report (`AskTim! verbose on`/`off` sets it for good) |
 
 Each run gets its own folder, `asktim-runs/1-approve/`, `asktim-runs/2-auto/` and so on. The agent
 can read your files, but it can only write in that folder. When it finishes, AskTim! writes (not
@@ -349,7 +349,7 @@ rules. Settings are applied in this order: defaults, the site file, each user's
 `~/.config/asktim/config.json`, environment variables (`ASKTIM_PROVIDER`, `ASKTIM_MODEL`,
 `ASKTIM_PRIVACY`, `ASKTIM_COURSE`, `ASKTIM_VERBOSE`, `ASKTIM_OPENAI_URL`, ...), then command-line
 options. Setting `"verbose": true` makes AskTim! show by default what it sends with each question,
-which can be useful in a class on using AI. Locked
+which can be useful in a class on using AI (add `"verbose"` to `"locked"` to keep it that way). Locked
 values win over everything after the site file. With `"sandbox": "on"`, the agent refuses to run
 without a sandbox.
 
@@ -380,14 +380,15 @@ Things to think about before a class:
 | `AskTim! tools` | what AskTim! found installed |
 | `AskTim! privacy` | what is and isn't sent |
 | `AskTim! privacy off` / `on` / `strict` | let data go to the AI, keep them here (the default), or withhold more; it stays until changed |
+| `AskTim! verbose on` / `off` | show everything AskTim! has to say, or only the answer (the default); it stays until changed |
 | `AskTim! setup-shell` | shell integration (`--remove` to undo) |
 | `AskTim! log` / `statement` | your log; a draft AI-use statement |
 | `AskTim! new` / `forget` | forget the conversation; delete stored keys |
 | `AskTim! insert N`, `AskTim! cells` | notebooks: code block N into a cell; the agent's waiting cells |
 
-Options for questions: `-v` (show what was sent, and AskTim!'s notes), `--no-history`, `--history N`,
-`--no-files`, `--file PATH`, `--new`, `--model NAME`, `--strict`, `--offline` (the built-in help
-only, without any AI).
+Options for questions: `-v` (show what was sent, and AskTim!'s notes) or `-q` (only the answer), for
+that command; `--no-history`, `--history N`, `--no-files`, `--file PATH`, `--new`, `--model NAME`,
+`--strict`, `--offline` (the built-in help only, without any AI).
 
 ## Files AskTim! keeps
 

@@ -42,17 +42,19 @@ More:
   AskTim! tools               the programs and packages AskTim! found
   AskTim! privacy             what is sent to the AI, and what never is
   AskTim! privacy off | on    let your data go to the AI, or keep them here (the default); it stays until changed
+  AskTim! verbose on | off    show everything AskTim! has to say, or only the answer (the default); it stays until changed
   AskTim! model NAME          change the model          AskTim! use claude|gemini|openai
   AskTim! log                 your recent questions     AskTim! statement   a draft statement on your use of AI
   AskTim! new                 forget the conversation   AskTim! forget      delete your stored key(s)
 
-Options for questions: -v (also show what was sent, and AskTim!'s notes), --no-history, --history N, --no-files,
-  --new, --offline, --model NAME.  For the agent, -v also shows the safeguards, what the AI saw of each step and the record.
+Options for questions: -v (also show what was sent, and AskTim!'s notes) or -q (only the answer), for this command;
+  --no-history, --history N, --no-files, --new, --offline, --model NAME.  For the agent, -v also shows the safeguards,
+  what the AI saw of each step and the record.
 Put your question in quotes. (In zsh, an unquoted ? or * is read by the shell first.)
 In a notebook: `import asktim`, then type AskTim! … in a cell. `asktim` is the same command without the "!".
 """
 
-SIMPLE_COMMANDS = {"status", "tools", "help", "version", "privacy", "new", "reset", "forget", "logout", "log", "statement",
+SIMPLE_COMMANDS = {"status", "tools", "help", "version", "privacy", "verbose", "new", "reset", "forget", "logout", "log", "statement",
                    "setup-shell", "model", "use", "why", "explain", "doctor", "insert", "cells"}
 
 
@@ -63,7 +65,7 @@ class Args(object):
         self.opts = {}
 
 
-FLAGS = {"--plan", "--auto", "--script", "--here", "--web", "--no-web", "--approve", "--no-history", "--no-files", "--new", "--offline",
+FLAGS = {"--plan", "--auto", "--script", "--here", "--web", "--no-web", "--approve", "--no-history", "--no-files", "--new", "--offline", "--quiet",
          "--strict", "--no-check", "--remove", "--refresh", "--all", "--color", "--no-color", "--help", "--version", "--show", "--dry-run", "--yes"}
 VALUE_OPTS = {"--model", "--provider", "--history", "--file", "-f", "--steps", "--timeout", "--url", "--key", "--since", "--shell", "--script-name", "--effort", "--folder"}
 
@@ -84,6 +86,8 @@ def parse(argv):
             a.opts["--version"] = True
         elif t in ("-v", "--verbose"):
             a.opts["--verbose"] = True
+        elif t in ("-q",):
+            a.opts["--quiet"] = True
         elif t in FLAGS:
             a.opts[t] = True
         elif t.split("=", 1)[0] in VALUE_OPTS:
@@ -184,6 +188,8 @@ def _cfg(a):
         over["effort.agent"] = a.opts["--effort"]
     if a.opts.get("--verbose"):
         over["verbose"] = True
+    elif a.opts.get("--quiet"):
+        over["verbose"] = False
     return _config.Config(over)
 
 
@@ -228,7 +234,7 @@ def _main(argv):
                  history_n=a.opts.get("--history"), send_files=False if a.opts.get("--no-files") else None)
         return 0
 
-    if (len(a.pos) == 1 and first in SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "insert", "privacy")):
+    if (len(a.pos) == 1 and first in SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "insert", "privacy", "verbose")):
         return command(cfg, ui, first, a)
 
     question = " ".join(a.pos).strip()
@@ -428,6 +434,8 @@ def command(cfg, ui, name, a):
             return set_privacy(cfg, ui, arg.lower())
         print(PRIVACY.format(level=cfg.get("privacy"), log=paths.pretty(logbook.log_file())))
         return 0
+    if name == "verbose":
+        return set_verbose(cfg, ui, arg.lower() if arg else None)
     if name in ("new", "reset"):
         from . import logbook
 
@@ -545,6 +553,36 @@ def set_privacy(cfg, ui, word):
     return 0
 
 
+VERBOSE_WORDS = {"on": True, "off": False, "yes": True, "no": False, "true": True, "false": False}
+
+
+def set_verbose(cfg, ui, word=None):
+    """AskTim! verbose on | off: saved in the user's settings, so it lasts until it is changed (-v and -q are for one command)."""
+    t = ui.t
+    if word is None:
+        t.line("AskTim! prints %s. Change it with:  AskTim! verbose on | off   (or -v / -q for one command)"
+               % ("everything it has to say (verbose)" if cfg.verbose else "only the answer"))
+        return 0
+    value = VERBOSE_WORDS.get(word)
+    if value is None:
+        ui.error("Use:  AskTim! verbose on   ·   AskTim! verbose off   (or -v / -q for one command)")
+        return 2
+    if cfg.is_locked("verbose") and value != cfg.verbose:
+        ui.error("Your course's settings fix this (verbose %s), so it cannot be changed here." % ("on" if cfg.verbose else "off"))
+        return 1
+    _config.save_user_setting("verbose", value)
+    env = (os.environ.get("ASKTIM_VERBOSE") or "").strip()
+    if env and (env.lower() in ("1", "true", "yes", "on")) != value:
+        t.warn("While the environment variable ASKTIM_VERBOSE=%s is set, it decides instead." % env)
+    if value:
+        t.good("AskTim! is verbose now, until you run `AskTim! verbose off`: with each answer it also shows what was sent and "
+               "which model answered, and for the agent the safeguards, each step and the record. -q is quiet for one command.")
+    else:
+        t.good("AskTim! prints only the answer now (for the agent: its commands, what they print, failures and its report). "
+               "-v shows everything for one command.")
+    return 0
+
+
 def status(cfg, ui):
     from . import history, paths, runner, shell_setup
 
@@ -559,7 +597,9 @@ def status(cfg, ui):
     filt = {"standard": "on - data stay on this computer", "strict": "strict - data, file and column names stay here",
             "off": "OFF - data can be sent to the AI (AskTim! privacy on turns it on)"}[cfg.get("privacy")]
     t.line("Data filter: %s%s (AskTim! privacy explains it)" % (filt, "; fixed by your course" if cfg.is_locked("privacy") else ""))
-    t.line("Output: %s" % ("everything (verbose)" if cfg.verbose else "only the answer (-v shows everything)"))
+    t.line("Output: %s%s" % ("everything (verbose; AskTim! verbose off for only the answer)" if cfg.verbose
+                             else "only the answer (AskTim! verbose on, or -v for one command, shows everything)",
+                             "; fixed by your course" if cfg.is_locked("verbose") else ""))
     sh = history.detect_shell()
     hooked = shell_setup.installed(sh) if sh in ("bash", "zsh", "fish") else False
     t.line("Shell: %s; AskTim!'s shell integration %s%s" % (sh, "is installed" if hooked else "is not installed (AskTim! setup-shell)",

@@ -405,7 +405,7 @@ def _footer(blocks):
 def nb_ask(question, attached=None, new=False, model=None, files=(), verbose=None):
     from .render import code_blocks
 
-    cfg = _config.Config({"verbose": True} if verbose else None)
+    cfg = _config.Config({"verbose": verbose} if verbose is not None else None)
     verbose = cfg.verbose
     if new:
         _STATE["chat"] = Conversation()
@@ -942,7 +942,7 @@ def nb_agent(task, mode="approve", here=False, web=None, steps=None, timeout=Non
 
         ip = get_ipython()
         load(ip)
-    cfg = _config.Config({"verbose": True} if verbose else None)
+    cfg = _config.Config({"verbose": verbose} if verbose is not None else None)
     ui = NotebookUI(ip, verbose=cfg.verbose)
     if mode in ("approve", "plan") and not ui.interactive:
         _md("The agent needs you to approve its steps, and this notebook cannot ask (it is not being run by a person). Use `AskTim! Agent --auto ...` to let it work alone.")
@@ -998,8 +998,9 @@ def _magic(line, cell=None):
         argv = (line or "").split()
     a = cli.parse(argv)
     first = a.pos[0].lower() if a.pos else ""
-    verbose = bool(a.opts.get("--verbose"))
-    cfg = _config.Config({"verbose": True} if verbose else None)
+    # -v / -q: for this command only (None: the settings decide)
+    verbose = True if a.opts.get("--verbose") else (False if a.opts.get("--quiet") else None)
+    cfg = _config.Config({"verbose": verbose} if verbose is not None else None)
     from .ui import TerminalUI
 
     ui = TerminalUI(cfg)
@@ -1057,7 +1058,7 @@ def _magic(line, cell=None):
         inv = inventory.gather()
         _md("**What AskTim! would send (nothing has been sent):**\n\n" + _fence(prompts.chat_system(inventory.describe(inv, notebook_packages=_packages()), cfg, notebook=True), "text") + "\n\n" + _fence(g.text() + "Question: " + " ".join(a.pos[1:]), "text") + "\n\n" + safe_markdown(g.summary()))
         return None
-    if (len(a.pos) == 1 and first in cli.SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "privacy")) or a.opts.get("--help"):
+    if (len(a.pos) == 1 and first in cli.SIMPLE_COMMANDS) or (len(a.pos) == 2 and first in ("model", "use", "forget", "log", "privacy", "verbose")) or a.opts.get("--help"):
         if a.opts.get("--help") or first == "help":
             print(cli.HELP)
             return None

@@ -440,3 +440,30 @@ def test_the_statement_says_when_the_data_filter_was_off(project, env, mock):
     run_asktim(["second question"], env, project)
     s = run_asktim(["statement"], env, project).stdout
     assert "For 1 of the 2 questions and tasks" in s and "data filter was off" in s
+
+
+def test_verbose_on_lasts_until_off_and_a_flag_changes_one_command(project, env, mock):
+    mock.queue = [{"text": "Answer."} for _ in range(5)]
+    p = run_asktim(["verbose", "on"], env, project)
+    assert p.returncode == 0 and "verbose now" in p.stdout and _settings(env)["verbose"] is True
+    assert "everything" in run_asktim(["verbose"], env, project).stdout
+    assert "Sent with your question" in run_asktim(["a question"], env, project).stdout
+    p = run_asktim(["-q", "a question"], env, project)  # quiet for this command only
+    assert p.stdout.strip() == "Answer.", p.stdout
+    assert "Sent with your question" in run_asktim(["a question"], env, project).stdout
+    p = run_asktim(["verbose", "off"], env, project)
+    assert p.returncode == 0 and _settings(env)["verbose"] is False
+    assert run_asktim(["a question"], env, project).stdout.strip() == "Answer."
+    assert "Sent with your question" in run_asktim(["-v", "a question"], env, project).stdout
+    assert run_asktim(["verbose", "loud"], env, project).returncode == 2
+    assert "Output: only the answer" in run_asktim(["status"], env, project).stdout
+
+
+def test_a_course_can_fix_verbose(project, env, mock, tmp_path):
+    site = tmp_path / "site.json"
+    site.write_text(json.dumps({"verbose": True, "locked": ["verbose"]}))
+    e = dict(env, ASKTIM_SITE_CONFIG=str(site))
+    p = run_asktim(["verbose", "off"], e, project)
+    assert p.returncode == 1 and "fix this" in p.stdout + p.stderr
+    mock.queue = [{"text": "Answer."}]
+    assert "Sent with your question" in run_asktim(["a question"], e, project).stdout
