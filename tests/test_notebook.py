@@ -176,3 +176,12 @@ def test_notebook_is_quiet_and_can_share_data(kernel, mock):
     assert "YAL000C" in body and "data filter off" in body
     assert "student" not in body.lower()
     kernel.run("AskTim! privacy on")
+
+
+def test_verbose_can_be_turned_on_and_off_in_a_cell(kernel, mock):
+    mock.queue = [{"text": "Answer."} for _ in range(3)]
+    assert "verbose now" in kernel.run("AskTim! verbose on")["stream"]
+    assert "Sent with your question" in kernel.run('AskTim! "a question"')["stream"]
+    assert "Sent with your question" not in kernel.run('AskTim! -q "a question"')["stream"]
+    kernel.run("AskTim! verbose off")
+    assert "Sent with your question" not in kernel.run('AskTim! "a question"')["stream"]
