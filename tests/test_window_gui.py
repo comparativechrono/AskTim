@@ -20,9 +20,22 @@ from conftest import run_asktim
 tkinter = pytest.importorskip("tkinter")
 
 
+def _tk_opens_a_window():
+    """Can Tk open a window here? (Tried in another process: where it cannot, Tk can hang rather than fail.)"""
+    code = "import tkinter; r = tkinter.Tk(); t = tkinter.Toplevel(r); t.update(); r.destroy()"
+    try:
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return "Tk did not open a window within a minute"
+    return None if r.returncode == 0 else "Tk cannot open a window here: %s" % (r.stderr.strip().splitlines() or ["?"])[-1]
+
+
 @pytest.fixture(scope="session")
 def display():
     if sys.platform == "darwin" or os.name == "nt" or os.environ.get("DISPLAY"):
+        why = _tk_opens_a_window()
+        if why:
+            pytest.skip(why)
         yield os.environ.get("DISPLAY")
         return
     xvfb = shutil.which("Xvfb")
@@ -33,6 +46,9 @@ def display():
     time.sleep(1.0)
     os.environ["DISPLAY"] = ":%d" % num
     try:
+        why = _tk_opens_a_window()
+        if why:
+            pytest.skip(why)
         yield os.environ["DISPLAY"]
     finally:
         os.environ.pop("DISPLAY", None)

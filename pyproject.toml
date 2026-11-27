@@ -70,3 +70,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# a test that hangs prints where every thread is, after this many seconds
+faulthandler_timeout = 120
