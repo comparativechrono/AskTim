@@ -53,7 +53,7 @@ Issues = "https://github.com/comparativechrono/AskTim/issues"
 [tool.setuptools]
 # The command students type, `AskTim! "my question"`, is a small script file rather than an entry
 # point: older versions of pip (23.0 and before) fail on an entry point whose name holds "!".
-script-files = ["bin/AskTim!"]
+# setup.py says which file: bin/AskTim! (Linux, macOS) or bin/AskTim!.cmd (the wheels for Windows).
 # `import AskTim` works as well as `import asktim` (students type the name they installed)
 py-modules = ["AskTim"]
 

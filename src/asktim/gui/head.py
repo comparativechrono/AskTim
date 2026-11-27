@@ -227,14 +227,24 @@ class Head(object):
         m.add_command(label="Choose a folder…", command=self.app.choose_folder)
         m.add_command(label="Put me back in the corner", command=self._to_corner)
         m.add_separator()
-        m.add_command(label="Quit AskTim!", command=self.app.quit)
+        m.add_command(label="Quit AskTim!", command=self._quit)
+
+    def _quit(self):
+        # (once the menu is done: on Windows and macOS it is the system's own menu, and this is called from its handling)
+        try:
+            self.win.after_idle(self.app.quit)
+        except tk.TclError:
+            self.app.quit()
 
     def _on_menu(self, e):
         self._fill_menu()
         try:
             self.menu.tk_popup(e.x_root, e.y_root)
         finally:
-            self.menu.grab_release()
+            try:
+                self.menu.grab_release()
+            except tk.TclError:
+                pass
 
     def _to_corner(self):
         self.place(None)

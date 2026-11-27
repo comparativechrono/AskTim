@@ -13,7 +13,7 @@ def _out(r):
 def test_short_names_and_the_list_of_models(env, mock, project):
     r = run_asktim(["models"], env, project)
     assert r.returncode == 0, _out(r)
-    assert "claude-opus-5-5" in r.stdout and "→ claude-sonnet-5-5" in r.stdout and "the most capable" in r.stdout
+    assert "claude-opus-5-5" in r.stdout and "→ claude-sonnet-5-5" in r.stdout and "opus: more capable than Sonnet" in r.stdout
     gets = [q for q in mock.requests if q.get("method") == "GET"]
     assert gets and gets[-1]["path"].startswith("/v1/models")
     r = run_asktim(["model", "opus"], env, project)
@@ -40,6 +40,25 @@ def test_short_names_without_the_service(env, project):
     assert "claude-opus-5-5" in r.stdout and "AskTim!'s list of current models" in r.stdout, _out(r)
     r = run_asktim(["models"], e, project)
     assert r.returncode == 1 and "opus (claude-opus-5-5)" in _out(r)
+
+
+def test_what_the_list_says_of_each_model():
+    found = [models.Model(i) for i in ("claude-fable-5-2", "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5",
+                                       "claude-opus-4-1", "claude-sonnet-4-5")]
+    n = models.notes(found, "claude")
+    # each family's newest model says what the family is for; the older ones say nothing
+    assert n["claude-opus-5-5"] == "opus: more capable than Sonnet; slower and dearer"
+    assert n["claude-haiku-5-5"] == "haiku: the fastest and cheapest"
+    assert n["claude-sonnet-5-5"].startswith("sonnet: fast and capable")
+    assert "claude-opus-4-1" not in n and "claude-sonnet-4-5" not in n
+    assert "claude-fable-5-2" not in n  # (no short name: nothing is claimed for it)
+    # and AskTim!'s own default says so
+    default = _config.DEFAULTS["models"]["claude"]
+    assert n[default].endswith("AskTim!'s default")
+    g = models.notes([models.Model(i) for i in ("gemini-3.8-pro", "gemini-3.8-flash", "gemini-3.8-flash-lite")], "gemini")
+    assert g["gemini-3.8-pro"] == "pro: Gemini's most capable"
+    assert g["gemini-3.8-flash-lite"].startswith("flash-lite: the fastest and cheapest")
+    assert models.notes([models.Model("llama3")], "openai") == {}
 
 
 def test_resolving_names(tmp_path, monkeypatch):

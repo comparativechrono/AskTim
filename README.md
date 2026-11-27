@@ -67,7 +67,7 @@ The settings of [AskTim!'s window](#the-window-asktim-gui) do the same with a fo
 **The model.** AskTim! uses Claude Sonnet (Gemini Flash with a Gemini key) unless you choose another:
 
 ```bash
-AskTim! model opus             # the newest Opus: the most capable, slower and dearer
+AskTim! model opus             # the newest Opus: more capable than Sonnet, slower and dearer
 AskTim! model haiku            # the newest Haiku: the fastest and cheapest (sonnet goes back)
 AskTim! model claude-opus-5-5  # a model by its full name
 AskTim! models                 # the models your key can use, newest first
@@ -472,7 +472,7 @@ that command; `--no-history`, `--history N`, `--no-files`, `--file PATH`, `--new
 |---|---|---|
 | settings and keys | `~/.config/asktim/` (`config.json`, `keys.json`) | `%APPDATA%\asktim\` |
 | cache (installed tools, conversation, suggested commands) | `~/.cache/asktim/` | `%LOCALAPPDATA%\asktim\cache\` |
-| log, command history, where the window was | `~/.local/state/asktim/` | `%LOCALAPPDATA%\asktim\state\` |
+| log, command history, where the window was, the window's messages (`window.log`) | `~/.local/state/asktim/` | `%LOCALAPPDATA%\asktim\state\` |
 
 `ASKTIM_HOME=/some/folder` puts all three under one folder.
 
@@ -489,12 +489,13 @@ asktim.agent("count the reads in data/*.fastq.gz", mode="auto")
 - **Linux:** everything works. The sandbox needs bubblewrap.
 - **macOS:** everything works, but the agent is not sandboxed by default (its commands are still
   checked). `"sandbox": "on"` uses macOS's `sandbox-exec`, which has had less testing.
-- **Windows:** AskTim! is written to work there, but it hasn't been tested on Windows yet. Use
-  `asktim` (without the `!`). The agent needs bash, so use it in WSL (which works as Linux does) or
-  Git Bash.
-- **The window** (`AskTim! gui`) is tested on Linux (X11) and macOS. On Linux the head is cut to its
-  shape with X11's SHAPE extension; under Wayland it runs through XWayland. On Windows it is written
-  to work but hasn't been tried yet.
+- **Windows:** `AskTim!` works in PowerShell and in cmd (from 0.3.1; before that, type `asktim`).
+  In a `.bat` file, write `call AskTim! ...`, or the batch file stops after it. The tests check the
+  command in both shells. The agent needs bash, so use it in WSL (which works as Linux does) or Git
+  Bash.
+- **The window** (`AskTim! gui`) is tested on Linux (X11) and macOS, and has been tried on Windows.
+  On Linux the head is cut to its shape with X11's SHAPE extension; under Wayland it runs through
+  XWayland.
 - **zsh:** quote questions, or run `AskTim! setup-shell`.
 - **Colab's terminal:** run `AskTim! setup-shell` and then `source ~/.bashrc` in it, so that AskTim!
   sees the commands you type there (see [Shell integration](#shell-integration)).

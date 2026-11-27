@@ -10,6 +10,7 @@ import queue
 import signal
 import sys
 import threading
+import time
 import traceback
 
 import tkinter as tk
@@ -39,6 +40,15 @@ COLORS = {
     "never_bg": "#ffebe9",
     "link": "#0969da",
 }
+
+
+def _guarded(fn):
+    """fn(), or None (with the error in the window's log) if it fails."""
+    try:
+        return fn()
+    except Exception:
+        traceback.print_exc()
+        return None
 
 
 class Bridge(object):
@@ -124,6 +134,9 @@ class App(object):
         self.workers = []
         self.head = Head(self) if head else None
         self.quitting = False
+        self.closed = False
+        # (seconds: the window's own process sets it, and then a Quit ends the process even if Tk or a thread hangs)
+        self.end_process_after = None
 
     def start(self, fn):
         """Run fn in a thread of its own (it must not touch Tk: it posts to the bridge)."""
@@ -135,8 +148,6 @@ class App(object):
 
     def wait_workers(self, timeout=5.0):
         """Let the threads end (after quit: Stop is pressed for them), so that nothing of Tk is freed outside Tk's thread."""
-        import time
-
         end = time.time() + timeout
         for t in list(self.workers):
             t.join(max(0.0, end - time.time()))
@@ -247,28 +258,82 @@ class App(object):
             self.chat.refresh_status()
 
     def quit(self):
-        if self.quitting:
+        """Close AskTim!'s window, and so end its main loop. Nothing that fails on the way stops it closing; a
+        second call finishes what a first one could not."""
+        if self.closed:
             return
+        first = not self.quitting
         self.quitting = True
-        if self.chat is not None:
-            self.chat.stop_event.set()
+        if first:
+            if self.end_process_after:
+                self._end_process_later(self.end_process_after)
+            places = _guarded(self._places) or {}
+            _guarded(self._hide)  # (the head and the chat go at once, whatever happens next)
+            _guarded(self._stop_work)
+            if places:
+                _guarded(lambda: self.remember(**places))
+            _guarded(self._stop_timers)
+        self._close()
+
+    def _end_process_later(self, seconds):
+        """Quit means quit: if the process has not ended a little while after it (Tk, or a thread, hangs), end it."""
+
+        def watch():
+            time.sleep(seconds)
             try:
-                self.remember(chat_geometry=self.chat.win.geometry())
+                sys.stderr.write("AskTim!: the window was still running %g seconds after Quit, so it was ended.\n" % seconds)
+                sys.stderr.flush()
+            except Exception:
+                pass
+            backend.release_pid()
+            os._exit(0)
+
+        threading.Thread(target=watch, name="asktim-quit", daemon=True).start()
+
+    def _places(self):
+        """Where the head and the chat are (to come back there next time)."""
+        places = {}
+        if self.chat is not None:
+            try:
+                places["chat_geometry"] = self.chat.win.geometry()
             except tk.TclError:
                 pass
         if self.head is not None:
             try:
-                self.remember(head=self.head.position())
+                places["head"] = self.head.position()
             except tk.TclError:
                 pass
+        return places
+
+    def _hide(self):
+        for w in (self.head.win if self.head else None, self.chat.win if self.chat else None):
+            if w is not None:
+                try:
+                    w.withdraw()
+                except tk.TclError:
+                    pass
+
+    def _stop_work(self):
+        if self.chat is not None:
+            self.chat.stop_event.set()
+
+    def _stop_timers(self):
         # (what is due later - the bridge's poll, the head's nod - would fire into a Tk that is gone)
         self.bridge.stop()
         if self.head is not None:
             self.head.stop()
+
+    def _close(self):
+        _guarded(self._hide)
         try:
             self.root.destroy()
-        except tk.TclError:
-            pass
+            self.closed = True
+        except Exception:
+            traceback.print_exc()
+            try:
+                self.root.quit()  # (Tk could not take it all down: the main loop ends anyway, and with it the process)
+            except Exception:
+                pass
 
     def run(self):
         self.root.mainloop()
@@ -289,6 +354,7 @@ def main(folder=None, open_chat=False):
     backend.claim_pid()
     try:
         app = App(folder)
+        app.end_process_after = 6.0  # (this process is the window's: a Quit ends it, come what may)
         if hasattr(signal, "SIGUSR1"):
             signal.signal(signal.SIGUSR1, lambda *a: app.bridge.post(app.open_chat))
         for sig in ("SIGTERM", "SIGINT", "SIGHUP"):
