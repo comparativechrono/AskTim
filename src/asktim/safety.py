@@ -103,7 +103,14 @@ _NETWORK_TEXT = [
     (re.compile(r"['\"]https?://"), "a web address"),
 ]
 _UPLOAD_TEXT = [
-    (re.compile(r"\b(?:requests|httpx)\s*\.\s*(?:post|put|patch)\s*\(|\bhttr::(?:POST|PUT)\b|\bsmtplib\b|\bftplib\b"), "sending data out"),
+    (re.compile(r"\b(?:requests|httpx)\s*\.\s*(?:post|put|patch)\s*\(|\bhttr2?::(?:POST|PUT|PATCH|req_body_\w+)\b|\bsmtplib\b|\bftplib\b"), "a POST or PUT request, e-mail or FTP"),
+    # urllib: a request with a body is a POST (urlopen(url, data), Request(url, data=...)), and http.client
+    (re.compile(r"\b(?:urlopen|Request)\s*\((?:[^()]|\([^()]*\))*\bdata\s*="), "a request with a body, which is a POST"),
+    (re.compile(r"\burlopen\s*\(\s*[^,()]+(?:\([^()]*\))?[^,()]*,\s*(?!timeout\b|context\b|cafile\b|None\b)[\w\"'(]"), "a request with a body, which is a POST"),
+    (re.compile(r"\bmethod\s*=\s*['\"](?:POST|PUT|PATCH)['\"]|\.request\s*\(\s*['\"](?:POST|PUT|PATCH)['\"]|\.putrequest\s*\("), "a POST or PUT request"),
+    (re.compile(r"(?<!mock)\.\s*(?:post|patch)\s*\(\s*['\"f]"), "a POST request"),
+    (re.compile(r"\b(?:upload_file|upload_fileobj|put_object|upload_blob|upload_from_filename|upload_from_file|storbinary|storlines)\s*\("), "a file upload"),
+    (re.compile(r"\bsocket\s*\.\s*(?:socket|create_connection)\s*\(|\bparamiko\b|\bpysftp\b|\bRCurl::(?:postForm|ftpUpload)\b|\bcurl::curl_upload\b|\bpostForm\s*\(|\bftpUpload\s*\("), "a direct network connection or upload"),
 ]
 _SUBPROCESS_TEXT = re.compile(r"\bos\.system\s*\(|\bsubprocess\.|\bos\.popen\s*\(|\bos\.exec\w*\s*\(|\bsystem2?\s*\(|\bshell\s*\(|\bpty\.spawn\b|`[^`]+`")
 _DELETE_TEXT = re.compile(r"\bshutil\.rmtree\s*\(|\bos\.(?:remove|unlink|rmdir|removedirs)\s*\(|\bunlink\s*\(|\bfile\.remove\s*\(|\bPath\([^)]*\)\.(?:unlink|rmdir)\s*\(")
@@ -189,6 +196,55 @@ def _read_balanced(s, i, open_ch="(", close_ch=")"):
     raise ValueError("unbalanced %s" % open_ch)
 
 
+def _dollar_paren(s, i, p):
+    """For s[i:i+2] == "$(": the index just after the expansion. A command substitution $( ) is
+    added to p.subs. Arithmetic $(( )) is not a command, but the commands inside it are: bash runs
+    the $( ) and ` ` in "$(( $(wc -l < f) / 4 ))". Bash reads "$((cmd) )" as a command substitution
+    of a subshell, so only an expansion that ends in "))" is arithmetic."""
+    if s[i + 2:i + 3] == "(":
+        e = _read_balanced(s, i + 2)
+        if s[e - 2:e] == "))":
+            _inner_subs(s[i + 3:e - 2], p)
+            return e
+        p.subs.append(s[i + 2:e - 1])
+        return e
+    e = _read_balanced(s, i + 2)
+    p.subs.append(s[i + 2:e - 1])
+    return e
+
+
+def _inner_subs(text, p):
+    """Add to p.subs the command substitutions that bash runs inside text: the body of an
+    arithmetic expansion, of ${ } or of a here-document (where quotes do not stop them)."""
+    j, n = 0, len(text)
+    while j < n:
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        try:
+            if c == "$" and text[j + 1:j + 2] == "(":
+                j = _dollar_paren(text, j, p)
+                continue
+            if c == "$" and text[j + 1:j + 2] == "{":
+                e = _read_balanced(text, j + 2, "{", "}")
+                _inner_subs(text[j + 2:e - 1], p)
+                j = e
+                continue
+        except ValueError:
+            # not closed: check the rest as a command, to be safe
+            p.subs.append(text[j + 2:])
+            return
+        if c == "`":
+            e = text.find("`", j + 1)
+            p.subs.append(text[j + 1:] if e < 0 else text[j + 1:e])
+            if e < 0:
+                return
+            j = e + 1
+            continue
+        j += 1
+
+
 def tokenize(s):
     p = Parsed()
     i, n = 0, len(s)
@@ -226,12 +282,7 @@ def tokenize(s):
                     text = "\n".join(body)
                     p.heredocs.append((delim, text, quoted))
                     if not quoted:
-                        for m in re.finditer(r"\$\(", text):
-                            try:
-                                e = _read_balanced(text, m.end())
-                                p.subs.append(text[m.end():e - 1])
-                            except ValueError:
-                                pass
+                        _inner_subs(text, p)
                 pending_heredocs = []
                 continue
             if c in " \t":
@@ -284,8 +335,14 @@ def tokenize(s):
                         j += 2
                         continue
                     if s[j] == "$" and s[j + 1:j + 2] == "(":
-                        e = _read_balanced(s, j + 2)
-                        p.subs.append(s[j + 2:e - 1])
+                        e = _dollar_paren(s, j, p)
+                        buf += s[j:e]
+                        ww.dynamic = True
+                        j = e
+                        continue
+                    if s[j] == "$" and s[j + 1:j + 2] == "{":
+                        e = _read_balanced(s, j + 2, "{", "}")
+                        _inner_subs(s[j + 2:e - 1], p)
                         buf += s[j:e]
                         ww.dynamic = True
                         j = e
@@ -309,17 +366,8 @@ def tokenize(s):
                 ww.raw += s[i:j + 1]
                 i = j + 1
                 continue
-            if c == "$" and s[i + 1:i + 3] == "((":
-                e = _read_balanced(s, i + 2)
-                ww = word()
-                ww.text += s[i:e]
-                ww.raw += s[i:e]
-                ww.dynamic = True
-                i = e
-                continue
             if c == "$" and s[i + 1:i + 2] == "(":
-                e = _read_balanced(s, i + 2)
-                p.subs.append(s[i + 2:e - 1])
+                e = _dollar_paren(s, i, p)
                 ww = word()
                 ww.text += s[i:e]
                 ww.raw += s[i:e]
@@ -349,6 +397,7 @@ def tokenize(s):
                 continue
             if c == "$" and s[i + 1:i + 2] == "{":
                 e = _read_balanced(s, i + 2, "{", "}")
+                _inner_subs(s[i + 2:e - 1], p)
                 ww = word()
                 ww.text += s[i:e]
                 ww.raw += s[i:e]
@@ -406,6 +455,7 @@ class Simple(object):
         self.redirs = []  # (op, Word)
         self.background = False
         self.heredoc_target = None
+        self.piped = False  # its input comes from the command before it (cmd1 | cmd2)
 
 
 def split_commands(p):
@@ -427,6 +477,7 @@ def split_commands(p):
                 if cur.words or cur.assigns or cur.redirs:
                     cmds.append(cur)
                 cur = Simple()
+                cur.piped = op in ("|", "|&")
             i += 1
             continue
         if expect_redir:
@@ -461,6 +512,9 @@ class Context(object):
             self.tmp.add(os.path.realpath("/var/tmp"))
         self.max_depth = max_depth
         self.vars = {}
+        # variables set from the output of a command or from a file ($(...), read, a loop over $(...)):
+        # what they hold is not known, so a download may not use them (they could carry data out)
+        self.dynamic_vars = set()
         self.cwd = self.run_dir
         self.functions = set()
         self.extra_writable = set()
@@ -765,6 +819,10 @@ def _check_simple(c, v, ctx, depth):
     for a in c.assigns:
         name, _, val = a.text.partition("=")
         name = name.rstrip("+")
+        if _computed(a.raw.partition("=")[2], ctx):
+            ctx.dynamic_vars.add(name)
+        else:
+            ctx.dynamic_vars.discard(name)
         if a.dynamic:
             ctx.vars.pop(name, None)
         else:
@@ -786,6 +844,8 @@ def _check_simple(c, v, ctx, depth):
         for a in c.words[1:]:
             if "=" in a.text and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", a.text):
                 name, _, val = a.text.partition("=")
+                if _computed(a.raw.partition("=")[2], ctx):
+                    ctx.dynamic_vars.add(name)
                 if a.dynamic:
                     ctx.vars.pop(name, None)
                 else:
@@ -816,6 +876,16 @@ def _check_simple(c, v, ctx, depth):
     if base in KEYWORDS:
         rest = Simple()
         rest.words = [w for w in words[1:]]
+        if base in ("for", "select") and len(words) >= 2:
+            items = []
+            for w in words[3:] if len(words) >= 3 and words[2].text == "in" else []:
+                if w.text in ("do", ";"):
+                    break
+                items.append(w)
+            if any(_computed(w.raw, ctx) for w in items) or not (len(words) >= 3 and words[2].text == "in"):
+                ctx.dynamic_vars.add(words[1].text)
+            else:
+                ctx.dynamic_vars.discard(words[1].text)
         if base in ("for", "select") and len(words) >= 3 and words[2].text == "in":
             var = words[1].text
             dirs = set()
@@ -844,6 +914,10 @@ def _check_simple(c, v, ctx, depth):
     if len(words) >= 2 and words[1].text == "()" or name.endswith("()"):
         ctx.functions.add(name.rstrip("()"))
         return
+    if base in ("read", "mapfile", "readarray"):
+        # the variables are filled from a file or a command's output
+        names = [w.text for w in args if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", w.text)]
+        ctx.dynamic_vars.update(names or ["REPLY", "MAPFILE"])
     if re.match(r"^\(\(", name):
         return
     v.commands.append(base)
@@ -901,6 +975,16 @@ def _check_simple(c, v, ctx, depth):
             return
         if not ctx.allow_network:
             v.block("%s uses the internet, which is off for the agent (the student can allow downloads with --web)" % base)
+            return
+        made = [a for a in args if _computed(a.raw, ctx)]
+        if made:
+            v.block("%s's address or options would be made when the command runs (%s), so AskTim! cannot check what "
+                    "they would send; write the address out in full" % (base, made[0].raw[:80]))
+            return
+        if base == "curl" and (_flag_set(args) & {"-K", "--config"} or any(
+                a.text in ("-H", "--header", "-b", "--cookie") and i + 1 < len(args) and args[i + 1].text.startswith("@")
+                for i, a in enumerate(args))):
+            v.block("curl would read what it sends from a file (-K, or -H/-b with @file); that is not allowed for the agent")
             return
         v.notes.append("%s uses the internet" % base)
         # where downloads go
@@ -1056,13 +1140,30 @@ def _check_interpreter(base, args, v, ctx, depth):
     _check_script(scripts[0], v, ctx, depth, how="run", lang=lang)
 
 
-def _check_script(word, v, ctx, depth, how="run", lang=None):
+_VAR_REF = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+_ARITH_ONLY = re.compile(r"\$\(\((?:(?!\$\(|`).)*?\)\)")
+
+
+def _computed(raw, ctx):
+    """Does this word get its value when the command runs, from a command's output or a file:
+    $( ), ` `, <( ), or a variable that was set that way?"""
+    rest = _ARITH_ONLY.sub("", raw or "")
+    if "$(" in rest or "`" in rest or "<(" in rest:
+        return True
+    return any(m.group(1) in ctx.dynamic_vars for m in _VAR_REF.finditer(rest))
+
+
+def _check_script(word, v, ctx, depth, how="run", lang=None, missing="block"):
     p = resolve(word, ctx)
     if p is None:
         v.confirm("the script to %s is given by a variable (%s)" % (how, word.raw))
         return
     if not os.path.exists(p):
-        return  # it will fail by itself, with a message the agent can read
+        # made (or downloaded) by an earlier part of the same command: AskTim! cannot read it first
+        if missing == "block":
+            v.block("%s does not exist yet, so AskTim! cannot check what it would do; make it in one step "
+                    "(with write_file) and %s it in the next" % (word.text, how))
+        return
     if not inside(p, ctx.run_dir) and not any(inside(p, t) for t in ctx.tmp):
         v.confirm("it runs %s, a script from outside the agent's folder" % _show(p, ctx))
     if depth >= ctx.max_depth:
@@ -1339,7 +1440,7 @@ def _check_workflow_text(text, path, v, ctx, depth, workdir, seen):
                     w.text = w.raw = rule.script if os.path.isabs(rule.script) else os.path.join(here, rule.script)
                     ext = os.path.splitext(rule.script)[1].lower()
                     lang = {".py": "Python", ".r": "R", ".rmd": "R", ".jl": "Julia", ".rs": None, ".sh": None}.get(ext)
-                    _check_script(w, sub, ctx, depth + 1, lang=lang)
+                    _check_script(w, sub, ctx, depth + 1, lang=lang, missing="skip")
             if rule.notebook is not None:
                 sub.confirm("it runs a Jupyter notebook, which AskTim! does not check")
             if rule.wrapper is not None:
@@ -1612,6 +1713,45 @@ def _check_prefixes(base, args, v, ctx):
                 _check_write(args[i + 1], ctx, v, "STAR's genome index")
 
 
+# programs that run code they are given (on their standard input, or as an argument)
+_CODE_RUNNERS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "python", "python3", "python2", "perl", "ruby",
+                 "Rscript", "R", "node", "php", "julia", "lua", "tclsh", "source", ".", "eval"}
+_FETCHERS = r"(?:curl|wget|aria2c|axel|lftp|fetch)"
+_FETCH_IN_SUB = re.compile(r"(?:\$\(|<\(|`)\s*(?:[A-Za-z_]\w*=\S*\s+)*(?:\S*/)?%s\b" % _FETCHERS)
+
+
+def _program(c):
+    """The program a simple command runs (past wrappers such as env, time and timeout, and shell keywords)."""
+    words = c.words
+    while words and words[0].text in KEYWORDS:
+        words = words[1:]
+    _, words = _strip_wrappers(words)
+    return (os.path.basename(words[0].text), words[1:]) if words else (None, [])
+
+
+def _check_downloaded_code(cmds, v):
+    """curl URL | bash, bash -c "$(curl URL)", source <(curl URL): code from the internet would run
+    before AskTim! (or the student) could read it."""
+    fetched = False
+    for c in cmds:
+        if not c.piped:
+            fetched = False
+        base, args = _program(c)
+        if base is None:
+            continue
+        if base in NETWORK:
+            fetched = True
+            continue
+        if base not in _CODE_RUNNERS:
+            continue
+        from_pipe = fetched and not [a for a in args if not a.text.startswith("-") and a.text != "-"]
+        if from_pipe or base in ("bash", "sh", "zsh", "dash", "ksh") and "-s" in [a.text for a in args] and fetched \
+                or any(_FETCH_IN_SUB.search(a.raw) for a in args):
+            v.block("it would run code from the internet straight away (%s), before anyone could read it; download "
+                    "the file in one step and run it in another, so that AskTim! can check it first" % base)
+            return
+
+
 def _analyse_into(text, v, ctx, depth=0):
     p = tokenize(text)
     if p.error:
@@ -1622,6 +1762,7 @@ def _analyse_into(text, v, ctx, depth=0):
     if re.search(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}", text):
         v.block("that is a fork bomb")
     cmds = split_commands(p)
+    _check_downloaded_code(cmds, v)
     heredoc_index = 0
     for c in cmds:
         _check_simple(c, v, ctx, depth)
@@ -1638,6 +1779,9 @@ def _analyse_into(text, v, ctx, depth=0):
     for sub in p.subs:
         if depth < ctx.max_depth:
             _analyse_into(sub, v, ctx, depth + 1)
+        else:
+            v.block("commands are nested inside each other too deeply for AskTim! to check; write them as separate commands")
+            break
 
 
 # characters that change how a command looks on screen without being seen (tab and newline are fine)
@@ -1724,6 +1868,26 @@ def check_file_write(path, run_dir, content=None, student_dir=None, protect=None
     return v, p
 
 
+_PASS_THROUGH = {"tee", "head", "tail", "grep", "egrep", "fgrep", "sort", "uniq", "cut", "column", "tr", "cat", "nl", "fold"}
+_OPTION_VALUE = re.compile(r"^(?:[\d.,:+\-]+[A-Za-z]{0,2}|.)$")  # 5, 2,3, 1-4, 2n, -k2, a one-character delimiter
+
+
+def _passes_through(c):
+    """A filter that prints (part of) its input and reads no file of its own: tee, head -n 5, grep PATTERN, sort -k2."""
+    _, words = _strip_wrappers(c.words)
+    if not words:
+        return False
+    base = os.path.basename(words[0].text)
+    if base not in _PASS_THROUGH:
+        return False
+    if base == "tee":
+        return True
+    operands = [w.text for w in words[1:] if not w.text.startswith("-")]
+    if base in ("grep", "egrep", "fgrep") and not any(w.text in ("-e", "-f") or w.text.startswith("--regexp") for w in words[1:]):
+        operands = operands[1:]  # the pattern
+    return all(_OPTION_VALUE.match(o) for o in operands)
+
+
 def output_kind(command):
     """How the data filter should treat what this command prints."""
     p = tokenize(command)
@@ -1756,7 +1920,11 @@ def output_kind(command):
         sub.tokens = g
         sc = split_commands(sub)
         if sc:
-            last_of_pipelines.append(sc[-1])
+            # tee, head, grep, sort ... with no file of their own print what they are given: the command before decides
+            k = len(sc) - 1
+            while k > 0 and _passes_through(sc[k]):
+                k -= 1
+            last_of_pipelines.append(sc[k])
     for c in last_of_pipelines:
         _, words = _strip_wrappers(c.words)
         if not words:

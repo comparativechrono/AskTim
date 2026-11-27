@@ -41,7 +41,8 @@ def ask(cfg, ui, question, files=(), stdin_text=None, new=False, dry_run=False, 
     g.redactions += n_q
     g.withheld += pasted
     if pasted:
-        ui.t.warn("AskTim! withheld %d line%s of your question that look like data." % (pasted, "" if pasted == 1 else "s"))
+        ui.t.warn("AskTim! kept %d piece%s of data in your question from the AI (lines or records that look like data); "
+                  "it is told only what kind of data was there." % (pasted, "" if pasted == 1 else "s"))
     items = [] if new else logbook.load_chat(int(cfg.get("chat_memory_minutes") or 60))
     conv = Conversation.from_json(items)
     message = g.text() + "Question: " + q_clean

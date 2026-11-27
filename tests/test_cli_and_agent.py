@@ -218,7 +218,7 @@ def test_data_pasted_into_a_question_is_withheld(project, env, mock):
     mock.queue = [{"text": "These are FASTQ records."}]
     q = "what are these lines?\n@r1\n%s\n+\n%s\n@r2\n%s\n+\n%s" % (reads[0], "F" * 76, reads[1], "F" * 76)
     p = run_asktim([q], env, project)
-    assert p.returncode == 0 and "withheld 8 lines of your question" in p.stdout
+    assert p.returncode == 0 and "kept 8 pieces of data in your question" in p.stdout
     assert reads[0] not in mock.all_text_sent() and "what are these lines?" in mock.all_text_sent()
 
 
@@ -274,3 +274,38 @@ def test_the_agent_sees_which_programs_and_folders_there_are(project, env, mock)
     assert p.returncode == 0, p.stdout + p.stderr
     result = [b["content"] for m in mock.requests[-1]["body"]["messages"] for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"][0]
     assert "withheld" not in result and "3-approve" in result and "/bin/bash" in result, result
+
+
+def test_script_with_auto_still_makes_a_script(project, env, mock):
+    # --auto used to win over --script, so the student got a plain run instead of one script
+    mock.queue = [{"text": "Nothing to do: there is no task I can do here."}]
+    p = run_asktim(["Agent", "--script", "--auto", "count the reads"], env, project, timeout=60)
+    assert p.returncode == 0, p.stdout[-2000:]
+    assert any(r.endswith("-script") for r in os.listdir(project / "asktim-runs"))
+    assert "ONE script" in mock.requests[0]["body"]["system"][0]["text"]
+    # no steps ran, so there is no rerun.sh to read
+    assert "rerun.sh before you run it" not in p.stdout
+
+
+def test_here_mode_does_not_report_the_agents_own_files_as_the_students(project, env, mock):
+    mock.queue = [
+        {"tools": [("run_command", {"command": "touch scratch.txt", "why": "Make a scratch file."})]},
+        {"tools": [("run_command", {"command": "rm -f scratch.txt", "why": "Tidy up."})]},
+        {"text": "Done."},
+    ]
+    p = run_asktim(["Agent", "--here", "--auto", "make and remove a scratch file"], env, project, timeout=120)
+    assert p.returncode == 0, p.stdout[-3000:]
+    assert "already in your folder" not in p.stdout
+    assert "already in the student's folder" not in mock.all_text_sent()
+    assert not (project / "scratch.txt").exists()
+
+
+def test_the_agent_is_told_where_files_are_with_here(project, env, mock):
+    # with --here the agent's folder is the student's: "../../data" sent it to the wrong place
+    mock.queue = [{"text": "Nothing to do."}]
+    assert run_asktim(["Agent", "--here", "--auto", "look at the data"], env, project).returncode == 0
+    system = mock.requests[0]["body"]["system"][0]["text"]
+    assert "the student's own folder" in system and "data/reads.fq" in system and "../../data" not in system
+    mock.queue = [{"text": "Nothing to do."}]
+    assert run_asktim(["Agent", "--auto", "look at the data"], env, project).returncode == 0
+    assert "../../data/reads.fq" in mock.requests[-1]["body"]["system"][0]["text"]

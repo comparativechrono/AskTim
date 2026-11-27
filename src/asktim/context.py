@@ -30,6 +30,7 @@ class Gathered(object):
         self.sent = []  # what the student is told was sent
         self.redactions = 0
         self.withheld = 0
+        self.withheld_described = 0  # of those, the lines a part of the summary already counts (the piped text)
 
     def add(self, text, what):
         if text:
@@ -46,9 +47,10 @@ class Gathered(object):
         s = ", ".join(self.sent) if self.sent else "only your question"
         extra = []
         if self.redactions:
-            extra.append("%d secret%s or personal detail%s removed" % (self.redactions, "" if self.redactions == 1 else "s", "" if self.redactions == 1 else "s"))
-        if self.withheld:
-            extra.append("%d line%s of data withheld" % (self.withheld, "" if self.withheld == 1 else "s"))
+            extra.append("%d removed: secrets, personal details or sequences" % self.redactions)
+        rest = self.withheld - self.withheld_described
+        if rest > 0:
+            extra.append("%d piece%s of data withheld" % (rest, "" if rest == 1 else "s"))
         return "Sent with your question: %s%s. No file contents." % (s, (" (" + "; ".join(extra) + ")") if extra else "")
 
 
@@ -95,6 +97,7 @@ def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, 
     if stdin_text:
         fr = privacy.filter_output(stdin_text, strict=strict, places=[cwd])
         g.withheld += fr.withheld
+        g.withheld_described += fr.withheld
         body = privacy.shorten(fr.text, 6000)
         g.add("Output the student piped into AskTim! (lines that look like data are withheld):\n```text\n%s\n```" % body,
               "the text you piped in (%s)" % fr.summary())

@@ -193,3 +193,104 @@ def test_paths_and_names_of_files_are_not_data(tmp_path):
     ids = "\n".join("SAMPLE%03d" % i for i in range(10)) + "\n"
     assert filter_output(ids, places=[str(runs)]).withheld == 10  # names that are not files stay withheld
     assert filter_output("/AAA/EEEE/EE<E//EEE\n" * 3).withheld == 3  # quality strings with slashes too
+
+
+# -- found by trying AskTim! with a real model (0.1.2) ------------------------------------------
+
+@pytest.mark.parametrize("question", [
+    "MT192765.1\t197\t.\tG\tT\t7.30814",
+    "My variant line is: MT192765.1\t197\t.\tG\tT\t7.30814  - is this a transition?",
+    "is MT192765.1 197 . G T 7.30814 a transition?",
+    "MT192765.1\t11719\t.\tG\tA\t225.417\t.\tDP=19;VDB=0.33;MQ=60\tGT:PL\t1/1:255,57,0",
+    "what does flag 99 mean in ERR5069949.2151832\t99\tMT192765.1\t17\t60\t151M\t=\t303\t437\tACGT\tFFFF",
+    "what does this mean: ERR5069949.2151832 99 MT192765.1 17 60 151M = 303 437 ACGT FFFF",
+    "chr7\t117559590\t117559700\tCFTR_exon10",
+    "GAPDH,1020,998,1100",
+    "how do I plot GAPDH,1020,998,1100 as bars?",
+])
+def test_one_record_pasted_into_a_question_is_withheld(question):
+    # one or two lines skipped the data filter: a single record reached the AI
+    from asktim.privacy import clean_question
+
+    text, _, withheld = clean_question(question)
+    assert withheld >= 1 and "withheld" in text, text
+    for piece in ("7.30814", "117559590", "151M", "1020,998", "1/1:255"):
+        assert piece not in text, (piece, text)
+
+
+def test_question_words_around_a_record_stay():
+    from asktim.privacy import clean_question
+
+    text = clean_question("My variant line is: MT192765.1\t197\t.\tG\tT\t7.30814  - is this a transition?")[0]
+    assert text.startswith("My variant line is: [AskTim!:") and text.endswith("- is this a transition?")
+    assert clean_question("is MT192765.1 197 . G T 7.30814 a transition?")[0].endswith(" a transition?")
+
+
+def test_a_genotype_next_to_an_rsid_is_personal_data():
+    from asktim.privacy import clean_question
+
+    for q in ("rs4244285 AG, rs12248560 CT - what is my metaboliser status?", "I am AG at rs4244285, what does that mean?",
+              "my rs4244285 is A/G"):
+        text, _, withheld = clean_question(q)
+        assert withheld and "genotype withheld" in text and " AG" not in text and "A/G" not in text, text
+    assert "rs4244285" in clean_question("rs4244285 AG")[0]  # the variant may be named
+
+
+@pytest.mark.parametrize("question", [
+    "what does rs4244285 G>A do in CYP2C19?",
+    "what does a heterozygous AG genotype mean?",
+    "is a G to T change at position 197 a transition?",
+    "my columns are #CHROM\tPOS\tID\tREF\tALT, how do I read them in R?",
+    "I have 1,234,567,890 reads, is that a lot?",
+    "how do I cut columns 1,2,3,4 from a file?",
+    "cut -f1,2,3,4 file.tsv gives the wrong columns",
+    "samtools view -b -q 30 aln.bam > out.bam fails, why?",
+    "how do I get chr7:117559590-117559700 from my BAM?",
+    "what does 200 + 0 mapped (100.00% : N/A) mean?",
+])
+def test_ordinary_questions_are_left_alone(question):
+    from asktim.privacy import clean_question
+
+    text, _, withheld = clean_question(question)
+    assert text == question and not withheld
+
+
+def test_genbank_translations_are_protein_sequences():
+    out = '                     /gene="CYP2C19"\n                     /translation="MDPFVVLVLCLSCLLLLSIWRQSSGRGKLPPGPTPLPVIGNILQ\n                     IDIKDVSKSLTNLSKIYGPVFTLYFGLERMVVLHGYEVVKEALIDLGEEFSGRGHFPLAERA"'
+    r = filter_output(out)
+    assert "MDPFVV" not in r.text and "IDIKDV" not in r.text and '/gene="CYP2C19"' in r.text
+    assert "MDPFVV" not in clean('is /translation="MDPFVVLVLCLSCLLL" right?')[0]
+
+
+SEQKIT = ("file                        format  type  num_seqs  sum_len  min_len  avg_len  max_len\n"
+          "../../data/test_1.fastq.gz  FASTQ   DNA        100   13,897       72      139      151\n"
+          "../../data/test_2.fastq.gz  FASTQ   DNA        100   13,748       53    137.5      151")
+SUMMARIES = {
+    "seqkit stats": SEQKIT,
+    "seqkit stats -T": SEQKIT.replace("  ", "\t").replace("\t\t", "\t"),
+    "jq -c": '{"total_reads":100,"read1_mean_length":138,"q20_rate":0.929841,"q30_rate":0.883716,"gc_content":0.390732}',
+    "python dict": "{'mapped': 197, 'total': 200}",
+    "TSTV": "TSTV\t0\t6\t2\t3.00\t6\t2\t3.00",
+    "bowtie2": "100 reads; of these:\n  100 (100.00%) were paired; of these:\n    2 (2.00%) aligned concordantly 0 times\n    98 (98.00%) aligned concordantly exactly 1 time\n    0 (0.00%) aligned concordantly >1 times\n99.50% overall alignment rate",
+    "samtools coverage": "#rname\tstartpos\tendpos\tnumreads\tcovbases\tcoverage\tmeandepth\tmeanbaseq\tmeanmapq\nMT192765.1\t1\t29829\t197\t12851\t43.0822\t0.918603\t33.3\t57.9",
+}
+
+
+@pytest.mark.parametrize("name", sorted(SUMMARIES))
+def test_summaries_reach_the_agent(name):
+    # the agent could not report read counts, Q30 or a mapping rate: these were withheld as data
+    r = filter_output(SUMMARIES[name])
+    assert r.withheld == 0, (name, r.text)
+    assert filter_output(SUMMARIES[name], strict=True).withheld > 0 or name == "bowtie2"  # strict mode keeps only counts like these
+
+
+def test_ls_folder_headings_are_names(tmp_path):
+    (tmp_path / "runs" / "1-auto").mkdir(parents=True)
+    out = "runs/1-auto:\ntotal 0\n"
+    assert filter_output(out, places=[str(tmp_path)]).withheld == 0
+
+
+@pytest.mark.parametrize("line", ['{"pos": 197, "ref": "G", "alt": "T"}', "{'pos': 197, 'ref': 'G', 'alt': 'T'}",
+                                  '{"GAPDH": 1020, "ACTB": 880}', "{'reads': 100, 'name': 'test_1'}"])
+def test_a_record_printed_as_a_dict_is_data(line):
+    assert filter_output(line).withheld == 1

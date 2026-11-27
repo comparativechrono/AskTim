@@ -17,7 +17,9 @@ promise to recognise every piece of data in every format: a value quoted in an e
 for example, can still get through (the "strict" setting replaces quoted values too).
 """
 
+import ast
 import getpass
+import json
 import os
 import re
 import socket
@@ -129,6 +131,9 @@ _UK_PHONE = re.compile(r"(?<![\w+])(?:\+44\s?7\d{3}|\(?07\d{3}\)?)\s?\d{3}\s?\d{
 _NI = re.compile(r"\b(?!BG|GB|NK|KN|TN|NT|ZZ)[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z]\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b")
 _SEQ_IN_TEXT = re.compile(r"(?<![A-Za-z])[ACGTUNacgtun]{40,}(?![A-Za-z])")
 _PROT_IN_TEXT = re.compile(r"(?<![A-Za-z])[ACDEFGHIKLMNPQRSTVWY]{50,}(?![A-Za-z])")
+# GenBank's protein translation of a CDS: /translation="MDPFVV..." (its first line can be short)
+_TRANSLATION = re.compile(r'(/translation="?)[A-Z*]{4,}')
+_GB_QUALIFIER = re.compile(r'^/(?!translation\b)[a-z_]+(?:=(?:"[^"]*"?|[\w.:\-]+))?$')
 _BLOB = re.compile(r"(?<![\w/+=])[A-Za-z0-9+/]{48,}={0,2}(?![\w/+=])")
 
 # Adapters and primers that are not data (they appear in commands such as cutadapt -a ...)
@@ -187,6 +192,8 @@ def redact_personal(text, strict=False):
     text, k = _SEQ_IN_TEXT.subn(seq, text)
     n += k
     text, k = _PROT_IN_TEXT.subn("[protein sequence]", text)
+    n += k
+    text, k = _TRANSLATION.subn(r'\1[protein sequence]', text)
     n += k
 
     def blob(m):
@@ -260,8 +267,64 @@ def clean_question(text, strict=False):
     if text.count("\n") >= 2:
         fr = filter_output(text, strict=strict)
         text, withheld = fr.text, fr.withheld
+    # one or two records pasted into a sentence: only the record goes, not the question around it
+    text, k = _records_in_text(text, strict)
+    withheld += k
     text, n = clean(text, strict=strict)
     return text, n, withheld
+
+
+_INLINE_NOTE = "[AskTim!: %s withheld – the student can see it]"
+# CHROM POS ID REF ALT QUAL (FILTER INFO ...), with spaces where the tabs were
+_VCF_INLINE = re.compile(r"(?<!\S)[\w.|:\-]+[ \t]+\d+[ \t]+(?:\.|[\w.;:\-]+)[ \t]+[ACGTNacgtn]+[ \t]+(?:[ACGTNacgtn,]+|<[\w:]+>|\*|\.)"
+                         r"[ \t]+(?:\d+(?:\.\d+)?|\.)(?:[ \t]+(?:PASS|\.|[A-Za-z][\w;]*[A-Z0-9][\w;]*)(?![\w']))?(?:[ \t]+\S*=\S*)?(?:[ \t]+\S+:\S+){0,2}")
+# QNAME FLAG RNAME POS MAPQ CIGAR ...
+_SAM_INLINE = re.compile(r"(?<!\S)\S+[ \t]+\d{1,4}[ \t]+\S+[ \t]+\d+[ \t]+\d{1,3}[ \t]+(?:\*|(?:\d+[MIDNSHP=X])+)(?:[ \t]+\S+){0,5}")
+# a genotype next to an rsID ("rs4244285 AG", "AG at rs4244285"): personal genetic data
+_RS_GENOTYPE = re.compile(r"\b(rs\d{3,})(\s*(?:[:=]|\bis\b|\bwas\b)?\s*\(?\s*)(?:[ACGT]{2}|[ACGTDI][/|][ACGTDI]|DD|II|DI|ID)\b")
+_GENOTYPE_RS = re.compile(r"\b(?:[ACGT]{2}|[ACGT][/|][ACGT])(\s+(?:at|for|in|on)\s+rs\d{3,})\b")
+_CSV_TOKEN = re.compile(r"(?<![\w,\-=])[\w.][\w.\-]*(?:,[\w.\-]*){3,}(?![\w,])")
+_THOUSANDS = re.compile(r"^\d{1,3}(?:,\d{3})+(?:\.\d+)?$")
+
+
+def _records_in_text(text, strict=False):
+    """Records pasted into a sentence: a VCF, SAM, BED or table row (tab- or comma-separated, or
+    a VCF or SAM record with spaces for tabs), or a genotype next to an rsID."""
+    count = [0]
+
+    def note(what):
+        count[0] += 1
+        return _INLINE_NOTE % what
+
+    out = []
+    for line in text.split("\n"):
+        if line.startswith("[AskTim!:"):
+            out.append(line)
+            continue
+        fields = line.split("\t")
+        if len(fields) >= 3:
+            head, _, first = fields[0].rpartition(" ")
+            last, sp, tail = fields[-1].partition(" ")
+            rec = [first] + fields[1:-1] + [last]
+            label = _classify(["\t".join(rec)], strict)[0]
+            if label and any(_is_num(f.strip()) for f in rec):
+                line = (head + " " if head else "") + note("a record (%s)" % label) + (sp + tail if sp else "")
+        line = _VCF_INLINE.sub(lambda m: note("a VCF record"), line)
+        line = _SAM_INLINE.sub(lambda m: note("a SAM record"), line)
+        line = _RS_GENOTYPE.sub(lambda m: m.group(1) + m.group(2) + note("a genotype"), line)
+        line = _GENOTYPE_RS.sub(lambda m: note("a genotype") + m.group(1), line)
+
+        def csv(m):
+            parts = m.group(0).split(",")
+            nums = [x for x in parts if _is_num(x)]
+            # a list of column numbers (1,2,3,4) or a large number (1,234,567) is not a row of data
+            if _THOUSANDS.match(m.group(0)) or len(nums) < 2 or (len(nums) == len(parts) and all(re.fullmatch(r"\d{1,2}", x) for x in nums)):
+                return m.group(0)
+            return note("a row of data")
+
+        line = _CSV_TOKEN.sub(csv, line)
+        out.append(line)
+    return "\n".join(out), count[0]
 
 
 # -----------------------------------------------------------------------------------------------
@@ -279,7 +342,11 @@ _WC = re.compile(r"^\s*\d+(?:\s+\d+){0,3}\s+\S+\s*$")
 _SUM = re.compile(r"^[0-9a-fA-F]{32,128}\s+\*?\S")
 _DU = re.compile(r"^\s*[\d.,]+[KMGTPkB]?i?B?\s+\S+\s*$")
 _FLAGSTAT = re.compile(r"^\d+ \+ \d+ [a-z]")
-_SN = re.compile(r"^SN\t")
+_SN = re.compile(r"^(?:SN|TSTV)\t")
+# tables of summary numbers, known by their header: seqkit stats, samtools coverage
+_SUMMARY_HEADERS = re.compile(r"^(?:file\s+format\s+type\s+num_seqs\s+sum_len\b|#rname\tstartpos\tendpos\tnumreads\tcovbases\b)")
+# an aligner's summary (bowtie2, hisat2): "98 (98.00%) aligned concordantly exactly 1 time"
+_ALIGN_SUMMARY = re.compile(r"^\s*\d[\d,]* \(\s*[\d.]+%\) (?:were|aligned|of these|mates|pairs|reads)\b")
 _KV = re.compile(r"^\s*\"?([A-Za-z][A-Za-z0-9 _./()%#\-]{1,60})\"?\s*[:=]\s*(.*)$")
 _LOGTAG = re.compile(r"^\s*(\[(?:[A-Za-z][\w:.*\-/]{0,60}|\d{4}-\d\d-\d\d[ T][\d:.,]+)\]|(?:INFO|WARN|WARNING|ERROR|Error|Warning|FATAL|DEBUG|NOTE|Note|Traceback|Exception|Usage|usage)\b:?)")
 _OPTION_HELP = re.compile(r"^\s*--?[A-Za-z0-9@?][\w\-]*[,=]?(\s|$)")
@@ -375,7 +442,7 @@ def _pathish(s):
 def _keep_special(s, strict):
     """Output that is not data although it is not prose: listings, counts, checksums, summaries,
     log lines, code. In strict mode only counts, checksums and log/error lines."""
-    if _FLAGSTAT.match(s) or _SUM.match(s):
+    if _FLAGSTAT.match(s) or _SUM.match(s) or _ALIGN_SUMMARY.match(s):
         return True
     if _TIMESTAMP.match(s) or _PROGRESS.match(s) or _VERSION_LINE.match(s) or _HEAD_TAIL.match(s):
         return True
@@ -393,7 +460,7 @@ def _keep_special(s, strict):
     m = _KV.match(s)
     if m and _keylike(m.group(1)) and len(_tokens(m.group(2))) <= 6 and not _numeric_heavy(m.group(2)):
         return not strict
-    if _kv_summary(s):
+    if _kv_summary(s) or _json_summary(s):
         return not strict
     if _CODE.match(s) and not _numeric_heavy(s):
         return True
@@ -415,6 +482,28 @@ def _kv_summary(s):
         pairs += 1
         pos = m.end()
     return 2 <= pairs <= 8
+
+
+def _one_line_dict(s):
+    """A dict printed on one line, as JSON (jq -c) or by Python's print(): the dict, else None."""
+    if not (s.startswith("{") and s.endswith("}")) or len(s) > 4000:
+        return None
+    try:
+        d = json.loads(s)
+    except ValueError:
+        try:
+            d = ast.literal_eval(s)
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            return None
+    return d if isinstance(d, dict) else None
+
+
+def _json_summary(s):
+    """A line of JSON with a few summary numbers, as jq -c prints them: {"total_reads":100,"q30_rate":0.88}."""
+    d = _one_line_dict(s)
+    # the keys of a summary are names like total_reads or q30_rate; GAPDH or YAL001C (genes) would make it a table of data
+    return (d is not None and 1 <= len(d) <= 16 and all(_keylike(str(k)) and re.search(r"[a-z]", str(k)) for k in d)
+            and all(isinstance(x, (int, float, bool)) or x is None for x in d.values()))
 
 
 def _keylike(key):
@@ -605,7 +694,14 @@ def _classify(lines, strict):
         s = L.strip()
         if not s:
             continue
-        if _SEQ_LINE.match(s):
+        if s.startswith("{") and _one_line_dict(s) is not None:
+            # a record printed as a dict ({"pos": 197, "ref": "G"}) is data; a few named summary numbers are not
+            labels[i] = None if (not strict and (_json_summary(s) or not _one_line_dict(s))) else "values"
+        elif _TRANSLATION.match(s):
+            labels[i] = "protein sequences"
+        elif not strict and _GB_QUALIFIER.match(s):
+            labels[i] = None  # a GenBank annotation: /gene="CYP2C19", /product="...", /db_xref="GeneID:1557"
+        elif _SEQ_LINE.match(s):
             labels[i] = "sequences"
         elif _PROT_LINE.match(s):
             labels[i] = "protein sequences"
@@ -694,6 +790,16 @@ def _classify(lines, strict):
             s = lines[i].strip()
             if labels[i] is None and s and not (_textlike(s) or _keep_special(s, True)):
                 labels[i] = "values"
+    # tables of summary numbers with a header AskTim! knows (seqkit stats, samtools coverage): one row per file or sequence
+    if not strict:
+        for i, L in enumerate(lines):
+            if _SUMMARY_HEADERS.match(L):
+                width = len(L.split())
+                labels[i] = None
+                j = i + 1
+                while j < n and lines[j].strip() and len(lines[j].split()) == width and not _seq_tokens(lines[j].strip()):
+                    labels[j] = None
+                    j += 1
     # Snakemake's table of jobs per rule ("Job stats:", "Job counts:" before version 7): rule names and counts
     for i, L in enumerate(lines):
         if L.strip() in ("Job stats:", "Job counts:"):
@@ -742,7 +848,7 @@ class FilterResult(object):
         if not self.withheld:
             return "nothing withheld"
         what = ", ".join(k for k, _ in self.kinds.most_common(3))
-        return "%d of %d lines withheld (%s)" % (self.withheld, self.total, what)
+        return "%d of %d lines withheld: %s" % (self.withheld, self.total, what)
 
 
 def _existing_names(lines, labels, places):
@@ -752,6 +858,8 @@ def _existing_names(lines, labels, places):
         if labels[i] not in ("lists of values", "values", "quality strings or encoded data"):
             continue
         name = ln.strip().rstrip("/*@=|")
+        if name.endswith(":") and not name.endswith("::"):
+            name = name[:-1].rstrip("/")
         if not name or len(name) > 300 or "\t" in name:
             continue
         try:

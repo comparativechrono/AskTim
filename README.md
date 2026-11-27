@@ -193,7 +193,8 @@ delete it before you share the notebook.
 
 **Sent with a question:**
 
-- your question;
+- your question, with any data pasted into it withheld: whole lines of data, and also a single
+  record inside a sentence (a VCF, SAM or BED line, a row of a table) or a genotype next to an rsID;
 - the programs and packages that are installed, with their versions;
 - your recent commands, with secrets (API keys, tokens, passwords), e-mail addresses, phone and NHS
   numbers and long sequences taken out, and your user name replaced by `user`;
@@ -214,8 +215,9 @@ from `~/.ssh` and other credentials.
 The data filter works line by line and recognises data by its shape: FASTQ and FASTA records,
 SAM/BAM alignments, VCF records and sample names, BED and GFF intervals, table rows, lists of IDs
 or numbers, long sequences, and encoded blobs. Error messages, warnings, help text, versions,
-counts, summaries (such as `samtools flagstat`) and file listings get through, because those are
-what the AI needs to help. Withheld lines are replaced by a note such as
+counts, summaries (such as `samtools flagstat`, `seqkit stats`, `bcftools stats`, an aligner's
+summary or a line of named numbers like `{"total_reads": 100, "q30_rate": 0.88}`) and file listings
+get through, because those are what the AI needs to help. Withheld lines are replaced by a note such as
 `[AskTim!: 1204 lines withheld – they look like data (SAM/BAM alignments); the student can see them]`.
 You always see the full output yourself.
 
@@ -255,7 +257,11 @@ change, so check them before recommending one to a class. When this was written 
   any file that changes outside the agent's folder. But a check can't know every program's options,
   so the sandbox is the stronger safeguard. `AskTim! status` says which you have.
 - **No network** unless `--web`. Uploads (`curl -T`, `scp`, `rsync` to another computer, `nc`, posting
-  files) are refused even then.
+  files) are refused even then. With `--web`, a download's address and options must be written out
+  in full: an address or header made from a file or a command's output (`$(…)`, or a variable read
+  from a file) is refused, because it could carry data out. Code from the internet may not run
+  straight away (`curl … | bash`, `bash -c "$(curl …)"`), and a script must exist before it runs, so
+  that AskTim! can read it first.
 - **No secrets.** Commands run with API keys and tokens removed from the environment. Reading
   `~/.ssh`, `~/.aws`, shell histories or AskTim!'s own keys is refused.
 - **What you approve is what runs.** Commands and files with hidden control characters or
@@ -270,11 +276,14 @@ change, so check them before recommending one to a class. When this was written 
   and scripts get the same checks as the agent's commands, and so do Snakemake's options and
   profiles. In the sandbox, programs keep their caches in the private temporary folder.
 - **Code is checked too.** Python and R the agent writes or runs is checked for installs, network
-  use, deletions and writes outside its folder. Risky code still needs your yes in `--auto`.
+  use, deletions and writes outside its folder. Code that would send data out (a POST or PUT, a file
+  upload, a raw network connection) is refused even with `--web`. Risky code still needs your yes in
+  `--auto`.
 - **A record of every run** (`RUN.md`, `run.json`, `rerun.sh`), and a draft statement on your use of
   AI (below).
 
-In a notebook, the agent's Python runs in your kernel with your permissions; only shell commands
+In a notebook, the agent's Python runs in your kernel with your permissions, in its run folder (so a
+file it saves with a relative path lands there, not next to your notebook); only shell commands
 can be sandboxed. AskTim! checks the code before it runs, but these checks are static. Read each
 Python step before you approve it, as the default mode asks you to. If nobody is there to approve
 (nbconvert, papermill), the agent refuses to start unless you used `--auto`.
@@ -416,8 +425,11 @@ publishing, so no PyPI token is stored anywhere.
 - The data filter recognises data by its shape (see above). Free text, such as a name, can get
   through.
 - Data typed into notebook code is withheld only when it looks like a table or a list of numbers.
-- AskTim! has been tested against stand-ins for the AI services, so rehearse with the real one.
-  Model names change: `AskTim! model NAME` sets another.
+- The tests use stand-ins for the AI services. AskTim! has also been tried with Claude
+  (claude-sonnet-5-5) on real data: SARS-CoV-2 reads, a VCF and a GenBank record, with chat, `why`,
+  `--file`, the agent's modes, `--web`, Snakemake and a notebook. Gemini and OpenAI-compatible
+  services have been tried only against stand-ins, so rehearse with them. Model names change:
+  `AskTim! model NAME` sets another.
 - In notebooks, the agent's Python steps are checked statically and run with your permissions.
 - Colab and VS Code can't receive new cells from the kernel, so they get Copy buttons.
 - On macOS the agent is not sandboxed unless the settings ask for it. On Windows the agent needs WSL
