@@ -42,6 +42,9 @@ def test_the_commands_of_a_block():
     assert backend.split_commands("$ ls -l\ntotal 4\n-rw-r--r-- 1 tim tim 3 x\n$ echo hi\nhi") == ["ls -l", "echo hi"]
     assert backend.split_commands("(base) user@host:~/data$ samtools --version\nsamtools 1.19") == ["samtools --version"]
     assert backend.shell_blocks("Run:\n\n```bash\nls\n```\n\n```python\nprint(1)\n```\n") == [("bash", "ls")]
+    # here-documents, whatever bash says of them (bash 3.2, macOS's, does not warn about an open one)
+    assert backend.split_commands("cat <<-'END' > a.txt\n\tx <<EOF\n\tEND\necho done") == ["cat <<-'END' > a.txt\n\tx <<EOF\n\tEND", "echo done"]
+    assert backend.split_commands("echo 'a << b'\ngrep x <<< \"$y\"") == ["echo 'a << b'", 'grep x <<< "$y"']
 
 
 def test_programs_that_wait_for_typing():
@@ -54,7 +57,7 @@ def test_programs_that_wait_for_typing():
 
 
 def test_what_the_window_will_not_run(tmp_path):
-    ok = backend.judge(["ls -l", "samtools view -c x.bam"], str(tmp_path))
+    ok = backend.judge(["ls -l", "wc -l notes.txt"], str(tmp_path))
     assert ok.level == "ok" and not ok.warnings
     # what the agent may not do is a warning: the user decides
     pip = backend.judge(["pip install pysam"], str(tmp_path))

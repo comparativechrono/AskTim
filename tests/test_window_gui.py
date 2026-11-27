@@ -8,6 +8,7 @@ import ctypes.util
 import gc
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -178,7 +179,7 @@ def test_an_answer_with_commands_to_run(gui, mock, project):
     dlg.run_btn.invoke()
     gui.idle()
     t = gui.text()
-    assert "$ tail -n +2 data/genes.csv | wc -l\n120\ndone" in t
+    assert re.search(r"\$ tail -n \+2 data/genes.csv \| wc -l\n\s*120\ndone", t), t  # (macOS's wc puts spaces in front)
     assert "failed · exit status 2" in t or "failed · exit status 1" in t
     assert "$ echo never\n(not run)" in t
     runs = gui.app.session.runs

@@ -75,9 +75,60 @@ def _balanced(text):
     return words.count("do") <= words.count("done") and words.count("if") <= words.count("fi") and words.count("case") <= words.count("esac")
 
 
+_HEREDOC = re.compile(r"<<(-?)[ \t]*\\?(['\"]?)([A-Za-z_][\w.-]*)\2")
+
+
+def _heredocs_in(line):
+    """The here-documents that a line starts: [(tabs are stripped, the word that ends it)]. A << inside
+    quotes, a here-string (<<<) and a comment start none."""
+    out, i, n, quote = [], 0, len(line), None
+    while i < n:
+        c = line[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+        elif c in "'\"":
+            quote = c
+            i += 1
+        elif c == "\\":
+            i += 2
+        elif c == "#" and (i == 0 or line[i - 1] in " \t;&|("):
+            break
+        elif line.startswith("<<<", i):
+            i += 3
+        elif line.startswith("<<", i):
+            m = _HEREDOC.match(line, i)
+            if m:
+                out.append((m.group(1) == "-", m.group(3)))
+                i = m.end()
+            else:
+                i += 2
+        else:
+            i += 1
+    return out
+
+
+def _open_heredocs(text):
+    """The here-documents of text that still wait for the line that ends them (bash 3.2, macOS's, does
+    not warn about an open one)."""
+    waiting = []
+    for ln in text.split("\n"):
+        if waiting:
+            strip_tabs, word = waiting[0]
+            if (ln.lstrip("\t") if strip_tabs else ln) == word:
+                waiting.pop(0)
+            continue
+        waiting += _heredocs_in(ln)
+    return waiting
+
+
 def complete(text):
     """Is this a whole shell command, not an unfinished loop, quote or here-document?"""
-    if text.rstrip().endswith("\\"):
+    if text.rstrip().endswith("\\") or _open_heredocs(text):
         return False
     sh = shutil.which("bash")
     if not sh:
