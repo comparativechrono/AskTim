@@ -176,6 +176,142 @@ def test_the_head_floats_moves_and_opens_the_chat(gui):
     assert backend.load_state()["head"] == [x0 - 100, y0 - 70]  # (it is where it was left next time)
 
 
+def _quit_entry(menu):
+    for i in range(menu.index("end") + 1):
+        if menu.type(i) == "command" and menu.entrycget(i, "label") == "Quit AskTim!":
+            return i
+    raise AssertionError("no Quit in the head's menu")
+
+
+def _events_until(app, until, seconds=5.0):
+    """Handle Tk's events until until() (Tk may be gone by then: so not with the Driver, which asks it for more)."""
+    tk_ = app.root.tk
+    t0 = time.time()
+    while time.time() - t0 < seconds and not until():
+        while tk_.dooneevent(tkinter._tkinter.ALL_EVENTS | tkinter._tkinter.DONT_WAIT):
+            pass
+        time.sleep(0.02)
+    return until()
+
+
+def test_quit_from_the_heads_menu(gui):
+    app = gui.app
+    app.open_chat()
+    gui.pump(0.3)
+    app.head.place([300, 200])
+    gui.pump(0.2)
+    head, chat = app.head.win, app.chat.win
+    app.head.menu.invoke(_quit_entry(app.head.menu))
+    assert _events_until(app, lambda: app.closed), "Quit did not close the window"
+    for w in (head, chat, app.root):
+        with pytest.raises(tkinter.TclError):
+            w.winfo_exists()  # (Tk itself is gone, so its main loop ends)
+    from asktim.gui import backend
+
+    assert backend.load_state()["head"] == [300, 200]  # (and it comes back where it was)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows' own menus")
+def test_quit_from_the_heads_menu_on_windows(gui):
+    """On Windows the head's menu is Windows' own (Tk shows it with TrackPopupMenu): Quit, chosen in it."""
+    import ctypes
+    import threading
+
+    user32 = ctypes.windll.user32
+    user32.FindWindowExW.restype = ctypes.c_void_p
+    user32.FindWindowExW.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+    WM_KEYDOWN, VK_UP, VK_RETURN, VK_ESCAPE = 0x0100, 0x26, 0x0D, 0x1B
+
+    def our_menu():
+        hwnd = None
+        while True:
+            hwnd = user32.FindWindowExW(None, hwnd, "#32768", None)  # (the class of Windows' menus)
+            if not hwnd:
+                return None
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == os.getpid() and user32.IsWindowVisible(hwnd):
+                return hwnd
+
+    app = gui.app
+    seen = []
+
+    def choose_quit():
+        for _ in range(200):
+            menu = our_menu()
+            if menu:
+                seen.append(menu)
+                time.sleep(0.3)
+                user32.PostMessageW(menu, WM_KEYDOWN, VK_UP, 0)  # (with nothing chosen yet: the last entry, Quit)
+                time.sleep(0.2)
+                user32.PostMessageW(menu, WM_KEYDOWN, VK_RETURN, 0)
+                time.sleep(3)
+                if our_menu():
+                    user32.PostMessageW(menu, WM_KEYDOWN, VK_ESCAPE, 0)  # (so that the test fails rather than hangs)
+                return
+            time.sleep(0.05)
+
+    threading.Thread(target=choose_quit, daemon=True).start()
+    x, y = app.head.position()
+    # the right button on the head: Tk shows the menu, and waits there until something is chosen in it
+    app.head.label.event_generate("<Button-3>", x=20, y=20, rootx=x + 20, rooty=y + 20)
+    assert seen, "Windows' menu did not appear"
+    assert _events_until(app, lambda: app.closed, 10), "Quit, chosen in the menu, did not close the window"
+
+
+def test_quit_closes_even_when_something_fails(gui, monkeypatch):
+    app = gui.app
+    from asktim.gui import backend
+
+    def full_disk(**kw):
+        raise RuntimeError("no space left")
+
+    monkeypatch.setattr(backend, "save_state", full_disk)
+    destroy = app.root.destroy
+    tries, ended = [], []
+
+    def destroy_fails_once():
+        tries.append(1)
+        if len(tries) == 1:
+            raise tkinter.TclError("can't delete Tcl command")
+        destroy()
+
+    monkeypatch.setattr(app.root, "destroy", destroy_fails_once)
+    monkeypatch.setattr(app.root, "quit", lambda: ended.append(1))
+    app.quit()
+    assert ended == [1]  # (Tk could not take it all down: its main loop is told to end anyway)
+    assert app.head.win.state() == "withdrawn"  # (and the head went at once)
+    assert not app.closed
+    app.quit()  # (Quit again: it finishes the job)
+    assert app.closed and len(tries) == 2
+
+
+def test_quit_ends_the_windows_process_whatever_happens(display, env, project):
+    """In the window's own process, Quit ends the process, even if Tk does not let go."""
+    code = "\n".join([
+        "import sys, tkinter",
+        "from asktim.gui.app import App",
+        "app = App(folder=sys.argv[1])",
+        "app.end_process_after = 0.5",
+        "def stuck():",
+        "    raise tkinter.TclError('stuck')",
+        "app.root.destroy = stuck",
+        "app.root.quit = lambda: None",
+        "app.root.after(300, app.quit)",
+        "app.run()",
+        "print('the main loop ended')",
+    ])
+    e = dict(env, DISPLAY=os.environ.get("DISPLAY", ""))
+    t0 = time.time()
+    r = subprocess.run([sys.executable, "-c", code, str(project)], env=e, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "so it was ended" in r.stderr and "the main loop ended" not in r.stdout
+    assert time.time() - t0 < 60
+
+
 def test_an_answer_with_commands_to_run(gui, mock, project):
     mock.queue = [
         {"text": "Count the genes without the header line:\n\n```bash\ntail -n +2 data/genes.csv | wc -l\nls data/missing.bam\necho never\n```\n"},
@@ -381,11 +517,14 @@ def test_settings_the_ai_service(gui, mock):
     s = gui.app.open_settings("service")
     gui.pump(0.2)
     assert s.service.get() == "Anthropic (Claude)" and s.model.get() == "claude-sonnet-5-5"
+    assert s.model_about.cget("text").startswith("Sonnet: fast and capable; AskTim!'s default. Short names work too")
     assert "ANTHROPIC_API_KEY" in s.key_state.cget("text")
     s.list_models()
     assert gui.pump(10, until=lambda: "newest first" in s.test_out.cget("text"))
     assert s.model_box.cget("values")[:3] == ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
     s.model.set("opus")
+    s._model_note()
+    assert s.model_about.cget("text").startswith("Opus: more capable than Sonnet; slower and dearer. Short")
     s.key.set("sk-ant-test-1111111111111111111111111111111111")
     s.test_and_save()
     assert gui.pump(10, until=lambda: "Saved" in s.test_out.cget("text")), s.test_out.cget("text")

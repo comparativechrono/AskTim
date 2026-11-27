@@ -1,0 +1,2 @@
+# the AskTim! command for Windows is a batch file: Windows line ends
+*.cmd text eol=crlf

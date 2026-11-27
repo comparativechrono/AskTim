@@ -66,3 +66,41 @@ jobs:
           python -m pip install ".[test]" pandas
       - name: Run the tests
         run: python -m pytest -q
+
+  windows:
+    # AskTim! on Windows: the wheel for Windows installs, and AskTim! (and asktim) run from cmd and PowerShell
+    name: Windows, Python 3.13
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Build the wheel for Windows, as the release does, and install it
+        shell: bash
+        run: |
+          python -m pip install --upgrade build wheel
+          ASKTIM_WINDOWS_WHEEL=1 python -m build --wheel --outdir windows
+          python -m wheel tags --remove --platform-tag win_amd64 windows/*-py3-none-any.whl
+          python -m pip install windows/*.whl
+      - name: AskTim! in cmd
+        shell: cmd
+        # (a batch file that runs another one - AskTim!.cmd - needs call, to carry on after it)
+        run: |
+          call AskTim! --version || exit /b 1
+          asktim --version || exit /b 1
+          call AskTim! status || exit /b 1
+      - name: AskTim! in PowerShell, and the window's modules
+        shell: pwsh
+        run: |
+          AskTim! --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          asktim status
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python -c "import tkinter, asktim.gui, asktim.gui.app, asktim.gui.backend; print('Tk', tkinter.TkVersion)"
+      - name: The window on Windows (the head, its menu - Windows' own - and Quit)
+        shell: bash
+        run: |
+          python -m pip install pytest
+          python -m pytest -q tests/test_window_gui.py -k "head or quit"

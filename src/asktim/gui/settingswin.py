@@ -217,9 +217,13 @@ class SettingsWindow(object):
 
     def _model_note(self):
         p = self._provider()
-        fam = models.Model(self.model.get().strip()).family() if p != "openai" else ""
+        name = self.model.get().strip()
+        fam = models.Model(name).family() if p != "openai" else ""
         short = models.SHORT.get(p, {})
         about = models.ABOUT.get(fam, "")
+        default = (_config.DEFAULTS.get("models") or {}).get(p)
+        if about and default and default in (name, short.get(name.lower())):
+            about += "; AskTim!'s default"
         names = ", ".join("%s (%s)" % (k, models.ABOUT.get(k, "")) for k in sorted(short)) if short else ""
         text = ("%s: %s. " % (fam.capitalize(), about) if about else "") + (
             "Short names work too: %s." % names if names else "Type the name of a model that your service offers.")

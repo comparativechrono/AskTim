@@ -630,11 +630,11 @@ def command(cfg, ui, name, a):
                 t.note("Short names AskTim! knows: " + ", ".join("%s (%s)" % (k, v) for k, v in sorted(short.items())))
             return 1
         current = cfg.model()
-        t.line("Models your key can use with %s (newest first):" % _config.PROVIDER_NAMES[cfg.provider])
+        t.line("Models your key can use with %s (newest first; → marks the one in use):" % _config.PROVIDER_NAMES[cfg.provider])
+        about = models.notes(found, cfg.provider)
         for m in found:
             mark = "→ " if m.id == current else "  "
-            about = models.ABOUT.get(m.family(), "") if cfg.provider in ("claude", "gemini") else ""
-            t.line("%s%-34s %s%s" % (mark, m.id, m.name if m.name != m.id else "", ("  · " + about) if about else ""))
+            t.line("%s%-34s %s%s" % (mark, m.id, m.name if m.name != m.id else "", ("  · " + about[m.id]) if m.id in about else ""))
         if current not in [m.id for m in found]:
             t.warn("The model in use, %s, is not in the list." % current)
         t.note("Choose one with:  AskTim! model NAME" + ("   (or a short name: %s)" % ", ".join(sorted(models.SHORT[cfg.provider])) if models.SHORT.get(cfg.provider) else ""))

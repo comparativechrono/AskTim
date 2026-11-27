@@ -19,15 +19,34 @@ SHORT = {
     "openai": {},
 }
 
-# what each Claude family is for, for lists and the settings window
+# what each family is for, for lists and the settings window
 ABOUT = {
-    "opus": "the most capable; slower and dearer",
-    "sonnet": "fast and capable: AskTim!'s default",
+    "opus": "more capable than Sonnet; slower and dearer",
+    "sonnet": "fast and capable",
     "haiku": "the fastest and cheapest",
     "pro": "Gemini's most capable",
-    "flash": "fast: AskTim!'s default for Gemini",
+    "flash": "fast and capable",
     "flash-lite": "the fastest and cheapest",
 }
+
+
+def notes(found, provider):
+    """{model id: a note} for a list of models: each family's newest model says what the family is
+    for and its short name; AskTim!'s default model says so. (Older models of a family get none.)"""
+    out, seen = {}, set()
+    default = (_config.DEFAULTS.get("models") or {}).get(provider)
+    families = set(SHORT.get(provider, {})) | ({"pro"} if provider == "gemini" else set())
+    for m in found:
+        parts = []
+        fam = m.family() if provider in ("claude", "gemini") else ""
+        if fam and fam not in seen and fam in families:
+            seen.add(fam)
+            parts.append("%s: %s" % (fam, ABOUT[fam]))
+        if m.id == default:
+            parts.append("AskTim!'s default")
+        if parts:
+            out[m.id] = " · ".join(parts)
+    return out
 
 
 class Model(object):
