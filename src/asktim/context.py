@@ -32,6 +32,7 @@ class Gathered(object):
         self.redactions = 0
         self.withheld = 0
         self.withheld_described = 0  # of those, the lines a part of the summary already counts (the piped text)
+        self.history_gap = None  # history.unseen_terminal(): the commands typed in this terminal cannot be seen
 
     def add(self, text, what):
         if text:
@@ -82,6 +83,7 @@ def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, 
         n = min(n, base)
     if n > 0 and (send_history if send_history is not None else cfg.get("send_history", True)):
         cmds, source = history.recent(n)
+        gap = g.history_gap = history.unseen_terminal()
         if cmds:
             lines = []
             for c in cmds:
@@ -89,14 +91,28 @@ def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, 
                 st = "" if c.status is None else ("   [exit %d]" % c.status if c.status else "")
                 lines.append("  $ %s%s" % (line.replace("\n", "\n    "), st))
             known = any(c.status is not None for c in cmds)
-            g.add("The user's last %d shell commands (oldest first%s):\n%s" % (len(cmds), "; [exit N] marks a command that failed" if known else "; exit statuses are not known", "\n".join(lines)),
-                  "your last %d commands" % len(cmds))
+            one = len(cmds) == 1
+            how = ([] if one else ["oldest first"]) + ["[exit N] marks a command that failed" if known else
+                                                       "its exit status is not known" if one else "exit statuses are not known"]
+            # (with a gap, these are other terminals' commands - from the hook's log - or those of terminals that have closed)
+            other = source == history.HOOK_SOURCE
+            elsewhere = "" if not gap else " from other terminals" if other else " from earlier terminal sessions"
+            g.add("The user's last %s%s (%s):\n%s" % ("shell command" if one else "%d shell commands" % len(cmds), elsewhere, "; ".join(how), "\n".join(lines)),
+                  ("your last command" if one else "your last %d commands" % len(cmds))
+                  + ("" if not gap else " (from other terminals)" if other else " (from earlier sessions)"))
             last = history.last_failed(cmds[-3:])
-            if last is not None:
+            if last is not None and not gap:
                 meaning = EXIT_MEANING.get(last.status, "")
                 g.add("The most recent failure: `%s` ended with exit status %d%s." % (_clean(g, last.line, strict), last.status, (" (" + meaning + ")") if meaning else ""), None)
-        elif source is None:
+        elif source is None and not gap:
             g.add("(AskTim! could not find the user's shell history.)", None)
+        if gap:
+            why = ("AskTim!'s shell hook is installed but not loaded in it" if gap["installed"] else
+                   ("fish has not saved them yet" if gap["shell"] == "fish" else "%s keeps them in memory until the terminal closes" % gap["shell"])
+                   + ", and AskTim!'s shell hook is not set up")
+            g.add("(AskTim! cannot see the commands typed in the terminal it was started from: %s. If the question is about a command, ask "
+                  "the user to paste the command and its error message - not their data - or to run `%ssource %s`.)"
+                  % (why, "" if gap["installed"] else "AskTim! setup-shell` and then `", gap["rc"]), None)
     for f in files or ():
         g.add(*about_file(g, f, strict))
     if stdin_text:

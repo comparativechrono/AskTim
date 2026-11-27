@@ -62,6 +62,8 @@ if [ -n "$BASH_VERSION" ] && [ -z "$__ASKTIM_HOOKED" ]; then
   }
   [[ $- == *i* ]] && [ "${BASH_VERSINFO[0]}" -ge 4 ] 2>/dev/null && bind -x '"\ea": __asktim_insert' 2>/dev/null
 fi
+# this tells AskTim! that the commands typed in this terminal are recorded
+if [ -n "$BASH_VERSION" ] && [ -n "$__ASKTIM_HOOKED" ]; then export ASKTIM_HOOK=bash; fi
 # <<< AskTim! shell integration <<<
 '''
 
@@ -104,6 +106,8 @@ if [ -n "$ZSH_VERSION" ] && [ -z "$__ASKTIM_HOOKED" ]; then
   alias 'AskTim!'='noglob AskTim!'
   alias asktim='noglob asktim'
 fi
+# this tells AskTim! that the commands typed in this terminal are recorded
+if [ -n "$ZSH_VERSION" ] && [ -n "$__ASKTIM_HOOKED" ]; then export ASKTIM_HOOK=zsh; fi
 # <<< AskTim! shell integration <<<
 '''
 
@@ -113,6 +117,7 @@ FISH = r'''# >>> AskTim! shell integration >>>
 set -l __asktim_state (set -q ASKTIM_HOME; and echo $ASKTIM_HOME/state; or begin; set -q XDG_STATE_HOME; and echo $XDG_STATE_HOME/asktim; or echo $HOME/.local/state/asktim; end)
 set -g __asktim_dir $__asktim_state
 set -g __asktim_log $__asktim_state/commands.tsv
+set -gx ASKTIM_HOOK fish  # this tells AskTim! that the commands typed in this terminal are recorded
 test -d $__asktim_dir; or mkdir -p $__asktim_dir 2>/dev/null
 function __asktim_postexec --on-event fish_postexec
     set -l s $status
@@ -185,9 +190,19 @@ def remove(shell):
     return f, True
 
 
-def installed(shell):
+def installed_block(shell):
+    """AskTim!'s lines in the shell's settings file, or None when they are not there."""
     try:
         with open(rc_file(shell), encoding="utf-8") as fh:
-            return BEGIN in fh.read()
+            text = fh.read()
     except OSError:
-        return False
+        return None
+    i = text.find(BEGIN)
+    if i < 0:
+        return None
+    j = text.find(END, i)
+    return text[i:j + len(END)] if j >= 0 else text[i:]
+
+
+def installed(shell):
+    return installed_block(shell) is not None

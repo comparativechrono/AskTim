@@ -44,6 +44,15 @@ def project(tmp_path):
     return p
 
 
+@pytest.fixture(autouse=True)
+def _not_typed_into_a_terminal(monkeypatch):
+    """pytest itself may have been started from an interactive terminal: AskTim! code run in the tests' own
+    process must not take that terminal for one it was typed into. (AskTim! run as a program still checks.)"""
+    from asktim import history
+
+    monkeypatch.setattr(history, "typed_into", lambda: None)
+
+
 @pytest.fixture
 def mock():
     m = MockAI()
