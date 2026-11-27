@@ -61,6 +61,16 @@ TERMINAL_FORMAT = [
     "the likely cause in plain words and the fix.",
 ]
 
+WINDOW_FORMAT = [
+    "The user is in AskTim!'s own window on their desktop. Put commands in ```bash code blocks, one command per line, with the "
+    "user's real file and folder names where you know them. Under each block the window has a Run button: when the user has read "
+    "the commands and confirmed them, they run in the user's folder (below), one after the other, and stop at the first that fails; "
+    "a `cd` or a variable lasts until the end of the block. The user sees what the commands print, and can ask you about a failure. "
+    "Do not put programs that wait for typing (an editor, a pager, an interactive shell) in a block to be run: say that they need a terminal.",
+    "If a recent command failed (it has a non-zero exit status in the lists below) and the question seems to be about it, explain "
+    "the likely cause in plain words and the fix.",
+]
+
 NOTEBOOK_FORMAT = [
     "The user is working in a Jupyter or Google Colab notebook. Put Python code in ```python blocks and terminal commands in "
     "```bash blocks (in a notebook they run with ! at the start of a line, or in a cell that starts with %%bash). Give complete code "
@@ -158,10 +168,10 @@ def course_lines(cfg):
     return ["", "What the instructor wants you to know about this course:", c] if c else []
 
 
-def chat_system(inventory_lines, cfg, notebook=False):
+def chat_system(inventory_lines, cfg, notebook=False, window=False):
     lines = [ROLE, "", DATA_RULE_CHAT_SHARED if cfg.share_data else DATA_RULE_CHAT, "", "How to help:"]
     lines += ["- " + r for r in TUTOR_RULES]
-    lines += ["- " + r for r in (NOTEBOOK_FORMAT if notebook else TERMINAL_FORMAT)]
+    lines += ["- " + r for r in (NOTEBOOK_FORMAT if notebook else WINDOW_FORMAT if window else TERMINAL_FORMAT)]
     lines += course_lines(cfg)
     lines += ["", "The computer the user is using:"] + ["- " + x if not x.startswith("  ") else x for x in inventory_lines]
     return "\n".join(lines)

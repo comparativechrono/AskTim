@@ -67,8 +67,11 @@ def _clean(g, text, strict):
     return text
 
 
-def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, send_files=None, cwd=None):
-    """Context for a question asked at the command line."""
+def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, send_files=None, cwd=None,
+             window_runs=None, output_of=None):
+    """Context for a question asked at the command line (or in AskTim!'s window).
+    window_runs: the commands run from AskTim!'s window ({"command", "status"}, oldest first);
+    output_of: (command, exit status) when stdin_text is what that command printed in the window."""
     strict = cfg.strict
     g = Gathered(share_data=cfg.share_data)
     cwd = cwd or os.getcwd()
@@ -113,18 +116,34 @@ def terminal(cfg, files=(), stdin_text=None, send_history=None, history_n=None, 
             g.add("(AskTim! cannot see the commands typed in the terminal it was started from: %s. If the question is about a command, ask "
                   "the user to paste the command and its error message - not their data - or to run `%ssource %s`.)"
                   % (why, "" if gap["installed"] else "AskTim! setup-shell` and then `", gap["rc"]), None)
+    if window_runs and n > 0 and (send_history if send_history is not None else cfg.get("send_history", True)):
+        runs = list(window_runs)[-min(n, 20):]
+        lines = ["  $ %s%s" % (_clean(g, r["command"], strict).replace("\n", "\n    "), "   [exit %d]" % r["status"] if r.get("status") else "")
+                 for r in runs]
+        g.add("Commands the user ran from AskTim!'s window (oldest first; [exit N] marks a command that failed):\n" + "\n".join(lines),
+              "the commands you ran from this window")
     for f in files or ():
         g.add(*about_file(g, f, strict))
     if stdin_text:
-        fr = privacy.filter_output(stdin_text, strict=strict, places=[cwd], share_data=g.share_data)
+        kind = "default"
+        places = [cwd]
+        if output_of:
+            from . import safety
+
+            kind = safety.output_kind(output_of[0])
+            places += safety.named_dirs(output_of[0], cwd)
+        fr = privacy.filter_output(stdin_text, kind=kind, strict=strict, places=places, share_data=g.share_data)
         g.withheld += fr.withheld
         g.withheld_described += fr.withheld
         body = privacy.shorten(fr.text, 6000)
-        if g.share_data:
-            g.add("Output the user piped into AskTim!:\n```text\n%s\n```" % body, "the text you piped in")
+        if output_of:
+            label = "What `%s` printed when the user ran it from AskTim!'s window (exit status %s%s" % (
+                _clean(g, output_of[0], strict), output_of[1], "):" if g.share_data else "; lines that look like data are withheld):")
+            said = "what that command printed"
         else:
-            g.add("Output the user piped into AskTim! (lines that look like data are withheld):\n```text\n%s\n```" % body,
-                  "the text you piped in (%s)" % fr.summary())
+            label = "Output the user piped into AskTim!" + (":" if g.share_data else " (lines that look like data are withheld):")
+            said = "the text you piped in"
+        g.add("%s\n```text\n%s\n```" % (label, body), said if g.share_data else "%s (%s)" % (said, fr.summary()))
     return g
 
 

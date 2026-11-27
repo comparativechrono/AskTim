@@ -15,6 +15,7 @@ jobs:
   linux:
     name: Linux, Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -31,10 +32,10 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - name: Install the programs the tests use
+      - name: Install the programs the tests use (and xvfb, a screen in memory for the tests of the window)
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q bwa samtools bubblewrap zsh fish
+          sudo apt-get install -y -q bwa samtools bubblewrap zsh fish xvfb
           # let bubblewrap build the agent's sandbox (newer Ubuntu restricts unprivileged user namespaces)
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Install AskTim! and what the tests need
@@ -53,6 +54,7 @@ jobs:
   macos:
     name: macOS, Python 3.13
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

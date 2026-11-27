@@ -101,6 +101,11 @@ def post_json(url, headers, body, timeout=90.0):
         raise HTTPError("The service sent something that is not JSON.", status=getattr(resp, "status", None), body=raw[:2000])
 
 
+def get_json(url, headers, timeout=30.0):
+    """GET a JSON document (a list of models, say)."""
+    return post_json(url, headers, None, timeout)
+
+
 def iter_sse(resp):
     """(event, data) pairs from a server-sent event stream. data is the joined data: lines."""
     event, data = None, []

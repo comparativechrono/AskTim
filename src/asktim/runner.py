@@ -174,8 +174,9 @@ def make_sandbox(mode, run_dir, student_dir, allow_network):
     return sb, None
 
 
-def run(command, cwd, timeout=600, sandbox=None, on_output=None, env_extra=None):
-    """Run a command; on_output(stream, text) gets what it prints as it prints it."""
+def run(command, cwd, timeout=600, sandbox=None, on_output=None, env_extra=None, stop=None):
+    """Run a command; on_output(stream, text) gets what it prints as it prints it.
+    stop: a threading.Event that stops the command when it is set (the Stop button of AskTim!'s window)."""
     res = RunResult()
     sh = shell_path()
     if not sh:
@@ -233,6 +234,10 @@ def run(command, cwd, timeout=600, sandbox=None, on_output=None, env_extra=None)
             except subprocess.TimeoutExpired:
                 if timeout and time.time() - t0 > timeout:
                     res.timed_out = True
+                    _kill(proc)
+                    break
+                if stop is not None and stop.is_set():
+                    res.interrupted = True
                     _kill(proc)
                     break
     except KeyboardInterrupt:

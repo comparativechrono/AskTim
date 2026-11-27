@@ -24,11 +24,49 @@ class MockAI(object):
         self.headers = []
         self.fail_next = []  # HTTP statuses to answer with first (e.g. [529] for "overloaded")
         self.default = {"text": "OK."}
+        # what GET .../models lists for each service (newest first)
+        self.models = {
+            "claude": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-4-1"],
+            "gemini": ["gemini-3.5-flash", "gemini-3.8-flash-preview-11-2026", "gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-pro", "text-embedding-005"],
+            "openai": ["gpt-5-mini", "gpt-5"],
+        }
         mock = self
 
         class H(BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
+
+            def do_GET(self):
+                # the lists of models (Anthropic and OpenAI: /v1/models; Gemini: /v1beta/models)
+                mock.requests.append({"path": self.path, "body": None, "method": "GET"})
+                mock.headers.append(dict(self.headers))
+                if mock.fail_next:
+                    status = mock.fail_next.pop(0)
+                    self.send_response(status)
+                    self.send_header("content-type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": {"message": "mock error %d" % status}}).encode())
+                    return
+                if self.path.startswith("/v1beta/models"):
+                    data = {"models": [{"name": "models/" + m, "displayName": m.replace("-", " ").title(),
+                                        "supportedGenerationMethods": ["embedContent"] if "embedding" in m else ["generateContent", "countTokens"]}
+                                       for m in mock.models["gemini"]]}
+                elif self.path.startswith("/v1/models") and self.headers.get("x-api-key"):
+                    ids = mock.models["claude"]
+                    data = {"data": [{"type": "model", "id": m, "display_name": m.replace("claude-", "Claude ").replace("-", " ").title(),
+                                      "created_at": "2026-%02d-01T00:00:00Z" % (12 - i)} for i, m in enumerate(ids)], "has_more": False}
+                elif self.path.startswith("/v1/models"):
+                    data = {"object": "list", "data": [{"id": m, "object": "model", "created": 1800000000 - i, "owned_by": "test"} for i, m in enumerate(mock.models["openai"])]}
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                raw = json.dumps(data).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
 
             def do_POST(self):
                 n = int(self.headers.get("content-length") or 0)

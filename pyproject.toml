@@ -25,6 +25,8 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Environment :: Console",
+    "Environment :: X11 Applications",
+    "Environment :: MacOS X",
     "Framework :: Jupyter",
     "Framework :: IPython",
     "Intended Audience :: Education",
@@ -62,5 +64,11 @@ version = { attr = "asktim._version.__version__" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# the floating head of AskTim!'s window (AskTim! gui)
+"asktim.gui" = ["*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# a test that hangs prints where every thread is, after this many seconds
+faulthandler_timeout = 120
